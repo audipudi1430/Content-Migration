@@ -143,7 +143,15 @@ npm run media:migrate -- --env-file=env/.env.stack-b --mode=ids --ids=101,102 --
 
 ## Media Excel flow (source of truth)
 
-The generated Excel sheet (`wp_media_mapping.xlsx` by default) includes:
+The generated Excel workbook (`wp_media_mapping.xlsx` by default) now contains:
+
+- `main_mapping` (primary control/lookup tab)
+- `images` (rows where `mime_type` is `image/*`)
+- `videos` (rows where `mime_type` is `video/*`)
+- `documents` (rows where `mime_type` is `application/pdf`)
+- `others` (all other mime types)
+
+The `main_mapping` tab includes:
 
 - `wp_id`
 - `mime_type`
@@ -153,6 +161,10 @@ The generated Excel sheet (`wp_media_mapping.xlsx` by default) includes:
 - `contentstack_type`
 - `migration_message`
 - source metadata (`wp_slug`, `wp_source_url`, `wp_title`)
+- `target_tab` (which mime tab contains the row)
+- `open_tab` (Excel hyperlink to jump to that mime tab row)
+- `resolved_contentstack_uid` (formula lookup from the target tab)
+- `reference_value` (auto JSON snippet: `{"uid":"<resolved_uid>"}`)
 
 Migration rules implemented from `mime_type`:
 
