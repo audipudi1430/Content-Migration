@@ -1,0 +1,23 @@
+{
+  "name": "wp-to-contentstack-migration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "migrate": "tsx src/migrate.ts",
+    "migrate:media": "tsx src/migrate.ts --media-only",
+    "media:extract": "tsx src/media/cli.ts extract",
+    "media:migrate": "tsx src/media/cli.ts migrate",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "fast-xml-parser": "^5.3.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
