@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "updatedAt": "2026-05-06T21:02:36.125Z",
+  "records": {
+    "asset:1873:en-us": {
+      "wpId": 1873,
+      "kind": "asset",
+      "assetUid": "blteadd491625965336",
+      "sourceKey": "vmchat-with-sanjay-poonen-and-oliver-roll",
+      "migratedAt": "2026-05-06T21:02:22.447Z",
+      "locale": "en-us"
+    },
+    "asset:1877:en-us": {
+      "wpId": 1877,
+      "kind": "asset",
+      "assetUid": "bltd33dc9057a026875",
+      "sourceKey": "a-conversation-with-cto-chris-wolf-americas-at-vmware",
+      "migratedAt": "2026-05-06T21:02:35.352Z",
+      "locale": "en-us"
+    }
+  },
+  "state": {
+    "wpMediaAssetFolderUid": "bltbf33d2e77d4d1157"
+  }
+}

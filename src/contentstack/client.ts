@@ -46,32 +46,65 @@ export class ContentstackManagementClient {
    * Create an asset folder. Body shape per CMA docs: `{ "asset": { "name", "parent_uid?" } }`.
    */
   async createAssetFolder(name: string, parentUid?: string): Promise<{ uid: string }> {
-    const body: { asset: { name: string; parent_uid?: string } } = { asset: { name } };
+    const body: { asset: { name: string; parent_uid?: string } } = {
+      asset: { name },
+    };
     if (parentUid) body.asset.parent_uid = parentUid;
 
-    const tryBodies = [
-      body,
-      { asset_folder: { name, ...(parentUid ? { parent_uid: parentUid } : {}) } },
-    ];
+    const res = await fetch(`${this.base()}/assets/folders`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} POST asset folder: ${text.slice(0, 800)}`);
 
-    let lastErr = "";
-    for (const b of tryBodies) {
-      const res = await fetch(`${this.base()}/assets/folders`, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify(b),
-      });
-      const text = await res.text();
-      if (res.ok) {
-        const json = JSON.parse(text) as { asset?: { uid: string }; asset_folder?: { uid: string } };
-        const uid = json.asset?.uid ?? json.asset_folder?.uid;
-        if (uid) return { uid };
-        lastErr = text.slice(0, 400);
-        continue;
-      }
-      lastErr = `${res.status}: ${text.slice(0, 400)}`;
+    const json = JSON.parse(text) as { asset_folder?: { uid: string }; asset?: { uid: string } };
+    const uid = json.asset_folder?.uid ?? json.asset?.uid;
+    if (!uid) {
+      throw new Error(`Contentstack create folder failed, missing uid in response: ${text.slice(0, 800)}`);
     }
-    throw new Error(`Contentstack create folder failed: ${lastErr}`);
+    return { uid };
+  }
+
+  async getAssetFolder(uid: string): Promise<{ uid: string; name: string; parent_uid?: string }> {
+    const res = await fetch(`${this.base()}/assets/${encodeURIComponent(uid)}`, {
+      headers: this.headers(),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} GET asset ${uid}: ${text.slice(0, 800)}`);
+    }
+    const json = JSON.parse(text) as { asset?: { uid: string; name: string; parent_uid?: string } };
+    const asset = json.asset;
+    if (!asset?.uid) {
+      throw new Error(`Contentstack GET asset missing uid: ${text.slice(0, 800)}`);
+    }
+    return asset;
+  }
+
+  /**
+   * Get asset folders. Returns all folders (fetches with high limit).
+   */
+  async getAssetFolders(): Promise<{ uid: string; name: string; parent_uid?: string }[]> {
+    const folders: { uid: string; name: string; parent_uid?: string }[] = [];
+    let skip = 0;
+    const limit = 100;
+    while (true) {
+      const url = `${this.base()}/assets/folders?limit=${limit}&skip=${skip}`;
+      const res = await fetch(url, { headers: this.headers() });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`Contentstack ${res.status} GET folders: ${text.slice(0, 800)}`);
+      const json = JSON.parse(text) as {
+        asset_folders?: { uid: string; name: string; parent_uid?: string }[];
+        assets?: { uid: string; name: string; parent_uid?: string }[];
+      };
+      const items = json.asset_folders ?? json.assets ?? [];
+      folders.push(...items);
+      if (items.length < limit) break;
+      skip += limit;
+    }
+    return folders;
   }
 
   /**

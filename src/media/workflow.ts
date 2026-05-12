@@ -106,11 +106,41 @@ async function ensureAssetFolderUid(
   cs: ContentstackManagementClient
 ): Promise<string> {
   const settings = loadAssetMigrationSettings();
-  let folderUid = process.env.CS_ASSET_FOLDER_UID ?? map.getWpMediaAssetFolderUid();
+  let folderUid = process.env.CS_ASSET_FOLDER_UID || map.getWpMediaAssetFolderUid();
+  console.error('Checking for existing folder UID...');
+  console.error('folderUid from env/map:', folderUid);
   if (folderUid) return folderUid;
+
+  // Check if folder already exists by name
+  try {
+    const existingFolders = await cs.getAssetFolders();
+    const existing = existingFolders.find(f => f.name === settings.folderName && f.parent_uid === settings.parentFolderUid);
+    if (existing) {
+      console.error('Found existing folder by name:', existing.uid);
+      map.setWpMediaAssetFolderUid(existing.uid);
+      try {
+        await map.save();
+        console.error('Saved to map');
+      } catch (error) {
+        console.error('Failed to save map:', (error as Error).message);
+      }
+      return existing.uid;
+    }
+  } catch (error) {
+    console.error('Failed to list existing folders, proceeding to create new:', (error as Error).message);
+  }
+
+  // Create new folder
+  console.error('Creating new folder...');
   const created = await cs.createAssetFolder(settings.folderName, settings.parentFolderUid);
+  console.error('Created folder:', created.uid);
   map.setWpMediaAssetFolderUid(created.uid);
-  await map.save();
+  try {
+    await map.save();
+    console.error('Saved to map');
+  } catch (error) {
+    console.error('Failed to save map:', (error as Error).message);
+  }
   return created.uid;
 }
 

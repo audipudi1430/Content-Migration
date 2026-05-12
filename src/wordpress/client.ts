@@ -1,4 +1,5 @@
 import type { WpEntityKind } from "../mapping-store.js";
+import fetch from "node-fetch";
 
 export type WpPaged<T> = { data: T[]; totalPages: number };
 

@@ -60,9 +60,12 @@ export class MappingStore {
   }
 
   static async load(filePath: string): Promise<MappingStore> {
+    console.error('Loading map from:', filePath);
     try {
       const raw = await readFile(filePath, "utf8");
+      console.error('File exists, reading...');
       const parsed = JSON.parse(raw) as MigrationMapFile;
+      console.error('Parsed data:', JSON.stringify(parsed, null, 2));
       if (parsed.version !== 1 || !parsed.records) {
         throw new Error("Invalid migration map file");
       }
@@ -71,15 +74,20 @@ export class MappingStore {
     } catch (e: unknown) {
       const err = e as NodeJS.ErrnoException;
       if (err.code === "ENOENT") {
+        console.error('File does not exist, creating default');
         return new MappingStore(filePath);
       }
+      console.error('Error loading map:', (e as Error).message);
       throw e;
     }
   }
 
   async save(): Promise<void> {
+    console.error('Saving map to:', this.path);
+    console.error('Data to save:', JSON.stringify(this.data, null, 2));
     this.data.updatedAt = new Date().toISOString();
     await writeFile(this.path, JSON.stringify(this.data, null, 2), "utf8");
+    console.error('Saved map');
   }
 
   get(kind: WpEntityKind, wpId: number, locale?: string): MappingRecord | undefined {
@@ -105,7 +113,9 @@ export class MappingStore {
   }
 
   getWpMediaAssetFolderUid(): string | undefined {
-    return this.data.state?.wpMediaAssetFolderUid;
+    const uid = this.data.state?.wpMediaAssetFolderUid;
+    console.error('getWpMediaAssetFolderUid:', uid);
+    return uid;
   }
 
   setWpMediaAssetFolderUid(uid: string): void {

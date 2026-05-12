@@ -1,4 +1,5 @@
 import { config as loadDotenv } from "dotenv";
+import { resolve } from "node:path";
 
 /**
  * Load from process.env. Use a secrets manager in production.
@@ -32,7 +33,7 @@ export function loadConfig() {
       apiHost: csApiHost,
       stackApiKey: stackApiKey!,
     },
-    mappingFile: process.env.MIGRATION_MAP_PATH ?? "migration-map.json",
+    mappingFile: resolve(process.env.MIGRATION_MAP_PATH ?? "migration-map.json"),
   };
 }
 
