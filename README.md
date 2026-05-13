@@ -28,45 +28,45 @@ npm install
 
 ### Required for every run
 
-| Variable | Description |
-|----------|-------------|
-| `WP_BASE_URL` | WordPress origin, e.g. `https://example.com` |
-| `CONTENTSTACK_MANAGEMENT_TOKEN` | CMA management token |
-| `CONTENTSTACK_STACK_API_KEY` | Stack API key |
+| Variable                        | Description                                  |
+| ------------------------------- | -------------------------------------------- |
+| `WP_BASE_URL`                   | WordPress origin, e.g. `https://example.com` |
+| `CONTENTSTACK_MANAGEMENT_TOKEN` | CMA management token                         |
+| `CONTENTSTACK_STACK_API_KEY`    | Stack API key                                |
 
 ### Strongly recommended (WordPress)
 
-| Variable | Description |
-|----------|-------------|
-| `WP_USER` | WordPress username |
+| Variable                  | Description                                           |
+| ------------------------- | ----------------------------------------------------- |
+| `WP_USER`                 | WordPress username                                    |
 | `WP_APPLICATION_PASSWORD` | Application password (not your normal login password) |
 
 ### Full migration (`npm run migrate`)
 
-| Variable | Description |
-|----------|-------------|
-| `CS_CONTENT_TYPE_CATEGORY` | Content type UID for categories |
-| `CS_CONTENT_TYPE_TAG` | Content type UID for tags (required by config even though tags are not migrated yet) |
-| `CS_CONTENT_TYPE_POST` | Content type UID for posts |
-| `CS_CONTENT_TYPE_PAGE` | Content type UID for pages |
+| Variable                   | Description                                                                          |
+| -------------------------- | ------------------------------------------------------------------------------------ |
+| `CS_CONTENT_TYPE_CATEGORY` | Content type UID for categories                                                      |
+| `CS_CONTENT_TYPE_TAG`      | Content type UID for tags (required by config even though tags are not migrated yet) |
+| `CS_CONTENT_TYPE_POST`     | Content type UID for posts                                                           |
+| `CS_CONTENT_TYPE_PAGE`     | Content type UID for pages                                                           |
 
 ### Optional (all runs)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
+| Variable                | Default               | Description                                 |
+| ----------------------- | --------------------- | ------------------------------------------- |
 | `CONTENTSTACK_API_HOST` | `api.contentstack.io` | Use your region host if different (e.g. EU) |
-| `MIGRATION_MAP_PATH` | `migration-map.json` | Path to the ID mapping / state file |
-| `CONTENTSTACK_LOCALE` | _(unset)_ | Passed to entry creation when using locales |
+| `MIGRATION_MAP_PATH`    | `migration-map.json`  | Path to the ID mapping / state file         |
+| `CONTENTSTACK_LOCALE`   | _(unset)_             | Passed to entry creation when using locales |
 
 ### Assets / media batching
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MEDIA_BATCH_SIZE` | `25` | Maximum **new** uploads per run (already mapped items are skipped) |
-| `MEDIA_OFFSET_OVERRIDE` | _(unset)_ | One-off override of the saved media list offset |
-| `CS_ASSET_FOLDER_NAME` | `WordPress Media` | Name of folder created in Contentstack when none is stored yet |
-| `CS_ASSET_PARENT_FOLDER_UID` | _(unset)_ | Parent folder UID when **creating** the migration folder |
-| `CS_ASSET_FOLDER_UID` | _(unset)_ | Use this existing asset folder; skip auto-create |
+| Variable                     | Default           | Description                                                        |
+| ---------------------------- | ----------------- | ------------------------------------------------------------------ |
+| `MEDIA_BATCH_SIZE`           | `25`              | Maximum **new** uploads per run (already mapped items are skipped) |
+| `MEDIA_OFFSET_OVERRIDE`      | _(unset)_         | One-off override of the saved media list offset                    |
+| `CS_ASSET_FOLDER_NAME`       | `WordPress Media` | Name of folder created in Contentstack when none is stored yet     |
+| `CS_ASSET_PARENT_FOLDER_UID` | _(unset)_         | Parent folder UID when **creating** the migration folder           |
+| `CS_ASSET_FOLDER_UID`        | _(unset)_         | Use this existing asset folder; skip auto-create                   |
 
 You can load these from env files directly. This repo now supports:
 
@@ -94,6 +94,79 @@ The media-only command runs `tsx src/migrate.ts --media-only`.
 
 `media:extract` and `media:migrate` run `tsx src/media/cli.ts`.
 
+## Workbook pipeline (URL tabs, tracking sheet, MongoDB)
+
+Use this when your **source of truth is an Excel workbook** (`.xlsx`) with **multiple tabs**: one tab lists **media** (URLs + WordPress IDs), and other tabs list **content** URLs + IDs to migrate into Contentstack. The pipeline builds a **tracking workbook**, keeps it in sync with **`migration-map.*.json`**, and optionally mirrors every row in **MongoDB** for dashboards and reporting.
+
+See `env/.env.migration-pipeline.example` for all variables; merge those lines into your stack env file (for example `env/.env.stack-a`).
+
+### Pipeline scripts
+
+| Script | Purpose |
+| ------ | ------- |
+| `npm run pipeline:extract -- --env=…` | Read the **source** workbook (all tabs), normalize URLs + WP IDs into the **tracking** sheet, log rows with missing IDs, upsert MongoDB |
+| `npm run pipeline:migrate-media -- --env=…` | Migrate **media** rows (from the configured media tab) to Contentstack using the same rules as `media:migrate`, update tracking + MongoDB |
+| `npm run pipeline:migrate-content -- --env=…` | Migrate **one content tab** (see `MIGRATION_START_SHEET`) via `MIGRATION_WP_REST_PATH`, resolve featured images, update tracking + MongoDB |
+| `npm run pipeline:publish -- --env=…` | After manual validation, publish entries (bulk by status, by WP IDs, or by Contentstack UIDs); update tracking + MongoDB |
+
+Shared flags (where supported): `--mode=all|single|ids|failed`, `--limit`, `--offset`, `--ids=1,2`, `--single-id=123`. Extract also accepts overrides such as `--source-workbook=`, `--tracking-workbook=`, `--media-tab=`, `--wp-rest-path=`, `--start-sheet=`, `--content-type-uid=`, `--run-id=` (see `src/pipeline/extract-urls.ts`).
+
+### Source workbook column conventions
+
+- **URL column** (any one of): `url`, `link`, `permalink`, `post_url`, `page_url`, `source_url`, `href`
+- **WordPress ID column** (any one of): `wp_id`, `wordpress_id`, `post_id`, `page_id`, `id`, `wordpress_post_id`, `media_id`
+- If the ID column is empty, the tool tries `?p=` and `attachment_id=` query parameters on the URL; otherwise the row is logged and marked **`NoWpId`** in the tracking sheet.
+
+### Steps: extract the **media** tab, then migrate media
+
+1. **Prepare the source workbook** (e.g. `migration-source.xlsx`) with a tab whose name matches **`MIGRATION_MEDIA_TAB_NAME`** (default `media`). Each row should include a URL and/or a WordPress attachment ID as above.
+2. **Configure env** for that stack: set `MIGRATION_SOURCE_WORKBOOK`, `MIGRATION_TRACKING_WORKBOOK`, `MIGRATION_MEDIA_TAB_NAME`, plus the usual `WP_*`, Contentstack, `MEDIA_SHEET_PATH` (media rows are also synced to this Excel file), video/document types if needed, and optional MongoDB vars (below).
+3. **Extract all tabs** into the tracking sheet (this includes the media tab and every content tab):
+
+   ```bash
+   npm run pipeline:extract -- --env=stack-a
+   ```
+
+4. **Migrate media** from the tracking sheet (only rows on the media tab), in batches:
+
+   ```bash
+   npm run pipeline:migrate-media -- --env=stack-a --mode=all --limit=25 --offset=0
+   ```
+
+   Retry failures with `--mode=failed`, target IDs with `--mode=ids --ids=101,102`, or a single ID with `--mode=single --single-id=101`.
+
+### Steps: extract and migrate **entries from one tab** into Contentstack
+
+1. Run **`pipeline:extract`** once (same as above) so the tracking workbook contains rows for your content tab (e.g. `posts`, `pages`, or a custom tab name).
+2. In the same env file, set:
+   - **`MIGRATION_WP_REST_PATH`** — WordPress REST **collection** used to load each item, e.g. `/wp-json/wp/v2/posts`, `/wp-json/wp/v2/pages`, or `/wp-json/wp/v2/your_cpt`
+   - **`MIGRATION_START_SHEET`** — workbook tab name whose **content** rows you want to process in this run
+   - **`MIGRATION_CONTENT_TYPE_UID`** — Contentstack content type UID for new entries (or rely on `CS_CONTENT_TYPE_POST` if you set that instead)
+   - Optional **`CS_FEATURED_IMAGE_FIELD_UID`** — asset reference field on that content type; when WordPress returns `featured_media`, the tool ensures the attachment exists in Contentstack first, then sets this field (images only).
+3. **Migrate content** (errors are recorded per row; the run continues):
+
+   ```bash
+   npm run pipeline:migrate-content -- --env=stack-a --mode=all --limit=20 --offset=0
+   ```
+
+4. After QA, **publish** (example: everything migrated but not yet published):
+
+   ```bash
+   npm run pipeline:publish -- --env=stack-a --publish-mode=bulk-status --filter-migration-status=Pass --filter-publish-status=Unpublished
+   ```
+
+### MongoDB: configure collections for tracking
+
+Tracking uses **one collection** per logical store (default name **`migration_tracking`**). You do **not** need to create the collection or a custom schema beforehand; the app **upserts** documents on each extract/migrate/publish.
+
+1. **Create a MongoDB deployment** (Atlas or self-hosted) and a **database** (for example `content_migration`).
+2. **Connection string** — set **`MONGODB_URI`** in your env file, e.g. `mongodb+srv://user:pass@cluster.mongodb.net/content_migration?retryWrites=true&w=majority`
+3. **Database name** — either include it in the URI path (recommended) or set **`MONGODB_DB_NAME`** if your URI does not specify a default database.
+4. **Collection name** — set **`MONGODB_COLLECTION`** (or **`MIGRATION_MONGO_COLLECTION`**) if you do not want the default `migration_tracking`. One collection can hold many runs.
+5. **Isolate runs / stacks** — set **`MIGRATION_RUN_ID`** (and optionally **`MIGRATION_ENV_LABEL`**) per stack or per campaign. Document `_id` is derived from `runId`, sheet, row kind, WP id (and URL when id is missing), so the same collection can serve multiple stacks without collisions **as long as `MIGRATION_RUN_ID` differs per isolation boundary**.
+
+If **`MONGODB_URI`** is unset, the pipeline still updates the **tracking Excel** and **`migration-map.*.json`**; MongoDB steps are skipped.
+
 ## Multi-environment / multi-stack files
 
 Sample files are included in `env/`:
@@ -107,11 +180,11 @@ Copy and update values for your real stacks/tokens before running.
 
 ### Which env file to use
 
-| File | Use case | Output isolation |
-|------|----------|------------------|
-| `env/.env.dev` | Development / testing migrations | `migration-map.dev.json`, `wp-media-mapping.dev.xlsx` |
-| `env/.env.prod` | Production migration runs | `migration-map.prod.json`, `wp-media-mapping.prod.xlsx` |
-| `env/.env.stack-a` | One Contentstack stack target | `migration-map.stack-a.json`, `wp-media-mapping.stack-a.xlsx` |
+| File               | Use case                          | Output isolation                                              |
+| ------------------ | --------------------------------- | ------------------------------------------------------------- |
+| `env/.env.dev`     | Development / testing migrations  | `migration-map.dev.json`, `wp-media-mapping.dev.xlsx`         |
+| `env/.env.prod`    | Production migration runs         | `migration-map.prod.json`, `wp-media-mapping.prod.xlsx`       |
+| `env/.env.stack-a` | One Contentstack stack target     | `migration-map.stack-a.json`, `wp-media-mapping.stack-a.xlsx` |
 | `env/.env.stack-b` | Another Contentstack stack target | `migration-map.stack-b.json`, `wp-media-mapping.stack-b.xlsx` |
 
 This keeps each environment/stack fully separate and avoids accidental cross-mapping.
@@ -137,6 +210,8 @@ npm run media:extract -- --env=prod
 
 # migrate selected IDs from sheet
 npm run media:migrate -- --env-file=env/.env.stack-b --mode=ids --ids=101,102 --limit=2
+
+npm run media:migrate -- --env=stack-a --mode=single --single-id=123 --limit=1 --offset=0
 ```
 
 > Replace placeholder values in `env/.env.*` files before running.
@@ -188,19 +263,19 @@ Use `--offset` and `--limit` for controlled batches.
 
 ## Additional env vars for media sheet workflow
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MEDIA_SHEET_PATH` | `wp-media-mapping.xlsx` | Excel sheet path |
-| `WP_MEDIA_ENDPOINT` | `/wp-json/wp/v2/media` | WordPress media endpoint path or full URL |
-| `MEDIA_MIGRATION_MODE` | `all` | Mode for `media:migrate` |
-| `MEDIA_IDS` | _(unset)_ | Comma-separated IDs for `ids` mode |
-| `MEDIA_IDS_XML_PATH` | _(unset)_ | XML file path for `xml` mode |
-| `MEDIA_OFFSET` | `0` | Start index on selected IDs |
-| `MEDIA_LIMIT` | `25` | Max rows processed in one run |
-| `CS_CONTENT_TYPE_VIDEO` | _(required for video)_ | Content type UID for video entries |
-| `CS_VIDEO_ASSET_FIELD_UID` | `video_file` | Asset field UID in video content type |
-| `CS_CONTENT_TYPE_DOCUMENT` | _(required for pdf)_ | Content type UID for document entries |
-| `CS_DOCUMENT_ASSET_FIELD_UID` | `document_file` | Asset field UID in document content type |
+| Variable                      | Default                 | Description                               |
+| ----------------------------- | ----------------------- | ----------------------------------------- |
+| `MEDIA_SHEET_PATH`            | `wp-media-mapping.xlsx` | Excel sheet path                          |
+| `WP_MEDIA_ENDPOINT`           | `/wp-json/wp/v2/media`  | WordPress media endpoint path or full URL |
+| `MEDIA_MIGRATION_MODE`        | `all`                   | Mode for `media:migrate`                  |
+| `MEDIA_IDS`                   | _(unset)_               | Comma-separated IDs for `ids` mode        |
+| `MEDIA_IDS_XML_PATH`          | _(unset)_               | XML file path for `xml` mode              |
+| `MEDIA_OFFSET`                | `0`                     | Start index on selected IDs               |
+| `MEDIA_LIMIT`                 | `25`                    | Max rows processed in one run             |
+| `CS_CONTENT_TYPE_VIDEO`       | _(required for video)_  | Content type UID for video entries        |
+| `CS_VIDEO_ASSET_FIELD_UID`    | `video_file`            | Asset field UID in video content type     |
+| `CS_CONTENT_TYPE_DOCUMENT`    | _(required for pdf)_    | Content type UID for document entries     |
+| `CS_DOCUMENT_ASSET_FIELD_UID` | `document_file`         | Asset field UID in document content type  |
 
 ## Mapping file
 

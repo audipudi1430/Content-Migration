@@ -1,11 +1,11 @@
-import { loadAssetMigrationSettings, loadConfig } from "../config.js";
+import { loadConfig } from "../config.js";
 import { ContentstackManagementClient } from "../contentstack/client.js";
 import { MappingStore } from "../mapping-store.js";
 import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
-import { kindFromMimeType } from "./mime.js";
+import { ensureAssetFolderUid, migrateOneMediaRow } from "./migrate-media-core.js";
 import { readMediaSheet, saveMediaSheet, toSheetRow, writeMediaSheet } from "./sheet.js";
 import type { MediaSheetRow, WpMediaItem } from "./types.js";
-import { filenameForMedia, numberArg, stringArg } from "./utils.js";
+import { numberArg, stringArg } from "./utils.js";
 import { readIdsFromXml } from "./xml.js";
 
 type MigrationSelectionMode = "all" | "single" | "ids" | "failed" | "xml";
@@ -101,141 +101,6 @@ function targetRowsByMode(rows: MediaSheetRow[], args: MigrationArgs): MediaShee
   return selected.slice(args.offset, args.offset + args.limit);
 }
 
-async function ensureAssetFolderUid(
-  map: MappingStore,
-  cs: ContentstackManagementClient
-): Promise<string> {
-  const settings = loadAssetMigrationSettings();
-  let folderUid = process.env.CS_ASSET_FOLDER_UID || map.getWpMediaAssetFolderUid();
-  console.error('Checking for existing folder UID...');
-  console.error('folderUid from env/map:', folderUid);
-  if (folderUid) return folderUid;
-
-  // Check if folder already exists by name
-  try {
-    const existingFolders = await cs.getAssetFolders();
-    const existing = existingFolders.find(f => f.name === settings.folderName && f.parent_uid === settings.parentFolderUid);
-    if (existing) {
-      console.error('Found existing folder by name:', existing.uid);
-      map.setWpMediaAssetFolderUid(existing.uid);
-      try {
-        await map.save();
-        console.error('Saved to map');
-      } catch (error) {
-        console.error('Failed to save map:', (error as Error).message);
-      }
-      return existing.uid;
-    }
-  } catch (error) {
-    console.error('Failed to list existing folders, proceeding to create new:', (error as Error).message);
-  }
-
-  // Create new folder
-  console.error('Creating new folder...');
-  const created = await cs.createAssetFolder(settings.folderName, settings.parentFolderUid);
-  console.error('Created folder:', created.uid);
-  map.setWpMediaAssetFolderUid(created.uid);
-  try {
-    await map.save();
-    console.error('Saved to map');
-  } catch (error) {
-    console.error('Failed to save map:', (error as Error).message);
-  }
-  return created.uid;
-}
-
-async function migrateOneRow(
-  row: MediaSheetRow,
-  wp: WordPressClient,
-  cs: ContentstackManagementClient,
-  map: MappingStore,
-  folderUid: string,
-  locale?: string
-): Promise<{ uid: string; type: string }> {
-  const mimeType = row.mime_type;
-  const mediaKind = kindFromMimeType(mimeType);
-  const title = row.wp_title || `wp-media-${row.wp_id}`;
-  const filename = filenameForMedia({
-    id: row.wp_id,
-    mime_type: mimeType,
-    slug: row.wp_slug,
-    source_url: row.wp_source_url,
-    title: { rendered: row.wp_title },
-  });
-  const { buffer, contentType } = await wp.fetchBinary(row.wp_source_url);
-  const uploaded = await cs.uploadAssetFile({
-    buffer,
-    filename,
-    contentType: mimeType || contentType,
-    title,
-    parentFolderUid: folderUid,
-  });
-
-  if (mediaKind === "image") {
-    map.set({
-      wpId: row.wp_id,
-      kind: "asset",
-      assetUid: uploaded.uid,
-      sourceKey: row.wp_slug,
-      migratedAt: new Date().toISOString(),
-      locale,
-    });
-    return { uid: uploaded.uid, type: "asset" };
-  }
-
-  if (mediaKind === "video") {
-    const videoType = process.env.CS_CONTENT_TYPE_VIDEO;
-    const videoAssetFieldUid = process.env.CS_VIDEO_ASSET_FIELD_UID ?? "video_file";
-    if (!videoType) {
-      throw new Error("Set CS_CONTENT_TYPE_VIDEO for video migration");
-    }
-    const entry = await cs.createEntry(
-      videoType,
-      {
-        title,
-        [videoAssetFieldUid]: [{ uid: uploaded.uid }],
-      },
-      locale
-    );
-    map.set({
-      wpId: row.wp_id,
-      kind: "custom",
-      contentstackUid: entry.uid,
-      sourceKey: row.wp_slug,
-      migratedAt: new Date().toISOString(),
-      locale,
-    });
-    return { uid: entry.uid, type: "entry:video" };
-  }
-
-  if (mediaKind === "document") {
-    const docsType = process.env.CS_CONTENT_TYPE_DOCUMENT;
-    const docsAssetFieldUid = process.env.CS_DOCUMENT_ASSET_FIELD_UID ?? "document_file";
-    if (!docsType) {
-      throw new Error("Set CS_CONTENT_TYPE_DOCUMENT for document migration");
-    }
-    const entry = await cs.createEntry(
-      docsType,
-      {
-        title,
-        [docsAssetFieldUid]: [{ uid: uploaded.uid }],
-      },
-      locale
-    );
-    map.set({
-      wpId: row.wp_id,
-      kind: "custom",
-      contentstackUid: entry.uid,
-      sourceKey: row.wp_slug,
-      migratedAt: new Date().toISOString(),
-      locale,
-    });
-    return { uid: entry.uid, type: "entry:document" };
-  }
-
-  throw new Error(`Unsupported mime_type for migration: ${mimeType}`);
-}
-
 export async function migrateFromSheet(argv: string[]): Promise<void> {
   const { cfg, wp, cs } = parseBaseClients();
   const args = parseMigrationArgs(argv);
@@ -259,7 +124,7 @@ export async function migrateFromSheet(argv: string[]): Promise<void> {
     const rowRef = rows.find((r) => r.wp_id === row.wp_id);
     if (!rowRef) continue;
     try {
-      const result = await migrateOneRow(rowRef, wp, cs, map, folderUid, locale);
+      const result = await migrateOneMediaRow(rowRef, wp, cs, map, folderUid, locale);
       rowRef.migration_status = "Pass";
       rowRef.contentstack_uid = result.uid;
       rowRef.contentstack_type = result.type;

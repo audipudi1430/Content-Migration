@@ -137,4 +137,51 @@ export class ContentstackManagementClient {
     const json = JSON.parse(text) as { asset: { uid: string } };
     return { uid: json.asset.uid };
   }
+
+  async getEntry(
+    contentTypeUid: string,
+    entryUid: string,
+    locale?: string
+  ): Promise<{ uid: string; version?: number; [k: string]: unknown }> {
+    const q = locale ? `?locale=${encodeURIComponent(locale)}` : "";
+    const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries/${encodeURIComponent(entryUid)}${q}`;
+    const res = await fetch(url, { headers: this.headers() });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} GET entry: ${text.slice(0, 800)}`);
+    const json = JSON.parse(text) as { entry: { uid: string; version?: number; [k: string]: unknown } };
+    return json.entry;
+  }
+
+  /**
+   * Publish a single entry. Uses CMA publish endpoint; environments/locales come from opts.
+   * @see https://www.contentstack.com/docs/developers/apis/content-management-api/
+   */
+  async publishEntry(
+    contentTypeUid: string,
+    entryUid: string,
+    opts: {
+      environments: string[];
+      locales: string[];
+      localeQuery?: string;
+      version?: number;
+    }
+  ): Promise<void> {
+    const localeQ =
+      opts.localeQuery ?? (opts.locales[0] ? `?locale=${encodeURIComponent(opts.locales[0])}` : "");
+    const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries/${encodeURIComponent(entryUid)}/publish${localeQ}`;
+    const body: Record<string, unknown> = {
+      entry: {
+        environments: opts.environments,
+        locales: opts.locales,
+      },
+    };
+    if (opts.version !== undefined) body.version = opts.version;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} POST publish: ${text.slice(0, 800)}`);
+  }
 }

@@ -8,11 +8,16 @@
     "migrate:media": "tsx src/migrate.ts --media-only",
     "media:extract": "tsx src/media/cli.ts extract",
     "media:migrate": "tsx src/media/cli.ts migrate",
+    "pipeline:extract": "tsx src/pipeline/cli.ts extract",
+    "pipeline:migrate-media": "tsx src/pipeline/cli.ts migrate-media",
+    "pipeline:migrate-content": "tsx src/pipeline/cli.ts migrate-content",
+    "pipeline:publish": "tsx src/pipeline/cli.ts publish",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
     "fast-xml-parser": "^5.3.0",
+    "mongodb": "^6.21.0",
     "node-fetch": "^3.3.2",
     "xlsx": "^0.18.5"
   },
