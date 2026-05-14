@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as XLSX from "xlsx";
-import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
+import {
+  contentTypeUidForSourceTab,
+  loadMongoConfig,
+  loadPipelinePaths,
+  wpRestPathForSourceTab,
+} from "../config-pipeline.js";
 import { upsertTrackingDoc, trackingDocId, getTrackingCollection, closeMongo } from "../mongo/tracking-repository.js";
 import type { MigrationTrackingDoc } from "../mongo/tracking-repository.js";
 import { mergeTrackingRows, readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
@@ -125,6 +130,8 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   const sheetOverride = stringArg(argv, "--tracking-sheet");
   const mediaTabOverride = stringArg(argv, "--media-tab");
   const restOverride = stringArg(argv, "--wp-rest-path");
+  const sheetRestPathsOverride = stringArg(argv, "--sheet-wp-rest-paths");
+  const sheetCtOverride = stringArg(argv, "--sheet-content-type-uid");
   const startSheetOverride = stringArg(argv, "--start-sheet");
   const ctOverride = stringArg(argv, "--content-type-uid");
   const runIdOverride = stringArg(argv, "--run-id");
@@ -134,6 +141,8 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   if (sheetOverride) process.env.MIGRATION_TRACKING_SHEET = sheetOverride;
   if (mediaTabOverride) process.env.MIGRATION_MEDIA_TAB_NAME = mediaTabOverride;
   if (restOverride) process.env.MIGRATION_WP_REST_PATH = restOverride;
+  if (sheetRestPathsOverride) process.env.MIGRATION_SHEET_WP_REST_PATHS = sheetRestPathsOverride;
+  if (sheetCtOverride) process.env.MIGRATION_SHEET_CONTENT_TYPE_UID = sheetCtOverride;
   if (startSheetOverride) process.env.MIGRATION_START_SHEET = startSheetOverride;
   if (ctOverride) process.env.MIGRATION_CONTENT_TYPE_UID = ctOverride;
   if (runIdOverride) process.env.MIGRATION_RUN_ID = runIdOverride;
@@ -148,8 +157,6 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   const srcBuf = readFileSync(paths.sourceWorkbook);
   const wb = XLSX.read(srcBuf);
   const mediaTab = paths.mediaTabName;
-  const wpRest = paths.wpRestPath;
-  const contentTypeUid = paths.contentTypeUid;
 
   const incoming: TrackingRow[] = [];
   const allMissing: string[] = [];
@@ -164,8 +171,8 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     if (!ws) continue;
     const matrix = sheetToMatrix(ws);
     const kind: TrackingRowKind = name === mediaTab ? "media" : "content";
-    const restForRow = kind === "media" ? "/wp-json/wp/v2/media" : wpRest;
-    const ct = kind === "media" ? "" : contentTypeUid;
+    const restForRow = wpRestPathForSourceTab(paths, name, kind);
+    const ct = contentTypeUidForSourceTab(paths, name, kind);
     const { rows, missingIdUrls } = parseSheetRows(name, matrix, kind, restForRow, ct);
     incoming.push(...rows);
     allMissing.push(...missingIdUrls);

@@ -25,6 +25,8 @@ export function wpEntityKindFromRestPath(restPath: string): WpEntityKind {
   const seg = restPath.replace(/\/$/, "").split("/").pop() ?? "";
   if (seg === "posts") return "post";
   if (seg === "pages") return "page";
+  if (seg === "story_author") return "story_author";
+  if (seg === "categories" || seg === "story_category") return "category";
   return "custom";
 }
 
@@ -173,9 +175,6 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "CONTENT_TRACK");
   const paths = loadPipelinePaths();
-  if (!paths.contentTypeUid) {
-    throw new Error("Set MIGRATION_CONTENT_TYPE_UID or CS_CONTENT_TYPE_POST for content migration");
-  }
   const cfg = loadConfig();
   const mongoCfg = loadMongoConfig();
   const mediaSheetPath = process.env.MEDIA_SHEET_PATH ?? "wp-media-mapping.xlsx";
@@ -193,7 +192,6 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
   const map = await MappingStore.load(cfg.mappingFile);
   const locale = process.env.CONTENTSTACK_LOCALE;
   const folderUid = await ensureAssetFolderUid(map, cs);
-  const kind = wpEntityKindFromRestPath(paths.wpRestPath);
 
   const allTracking = loadAllTracking(paths);
   const selected = selectContentRows(allTracking, paths.migrateStartSheet, sel.mode as SelectionMode, sel);
@@ -215,6 +213,15 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
     );
     if (!trackRef) continue;
     try {
+      const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
+      const ctUid = (trackRef.content_type_uid || paths.contentTypeUid).trim();
+      if (!ctUid) {
+        throw new Error(
+          "Missing Contentstack content type UID for this row: set MIGRATION_CONTENT_TYPE_UID or MIGRATION_SHEET_CONTENT_TYPE_UID (then re-run extract), or set content_type_uid on the tracking row"
+        );
+      }
+      const kind = wpEntityKindFromRestPath(restBase);
+
       const existing = map.get(kind, tRow.wp_id, locale);
       if (existing?.contentstackUid) {
         trackRef.contentstack_entry_uid = existing.contentstackUid;
@@ -226,7 +233,7 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
         continue;
       }
 
-      const rel = `${paths.wpRestPath.replace(/^\//, "")}/${tRow.wp_id}`;
+      const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
       const p = await wp.getJson<WpRestPost>(rel);
       const featured = p.featured_media && p.featured_media > 0 ? p.featured_media : undefined;
       const entryPayload: Record<string, unknown> = {
@@ -251,7 +258,7 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
         trackRef.featured_media_wp_id = String(featured);
       }
 
-      const entry = await cs.createEntry(paths.contentTypeUid, entryPayload as { title: string }, locale);
+      const entry = await cs.createEntry(ctUid, entryPayload as { title: string }, locale);
       map.set({
         wpId: tRow.wp_id,
         kind,
@@ -263,7 +270,7 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
       await map.save();
 
       trackRef.contentstack_entry_uid = entry.uid;
-      trackRef.content_type_uid = paths.contentTypeUid;
+      trackRef.content_type_uid = ctUid;
       trackRef.migration_status = "Pass";
       trackRef.migration_message = "";
       trackRef.updated_at = new Date().toISOString();
