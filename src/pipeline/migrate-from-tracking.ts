@@ -6,11 +6,11 @@ import { loadConfig } from "../config.js";
 import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
 import { readMediaSheet, saveMediaSheet, toSheetRow } from "../media/sheet.js";
 import { ensureAssetFolderUid, fetchWpMediaItem, migrateOneMediaRow } from "../media/migrate-media-core.js";
+import { ensureWpAttachmentImageAssetUid } from "./wp-media-asset.js";
 import { closeMongo } from "../mongo/tracking-repository.js";
 import { initPipelineEnv, parseSelection, type SelectionMode } from "./args.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import type { TrackingRow } from "./types.js";
-import { kindFromMimeType } from "../media/mime.js";
 
 type WpRestPost = {
   id: number;
@@ -145,56 +145,7 @@ export async function runMigrateMediaFromTracking(argv: string[]): Promise<void>
   console.error(`[migrate-media] Done. ${completed}/${selected.length} succeeded (selection size).`);
 }
 
-async function ensureFeaturedAssetUid(
-  attachmentId: number,
-  wp: WordPressClient,
-  cs: ContentstackManagementClient,
-  map: MappingStore,
-  mediaSheetPath: string,
-  folderUid: string,
-  locale: string | undefined
-): Promise<string> {
-  const mapped = map.get("asset", attachmentId);
-  if (mapped?.assetUid) return mapped.assetUid;
-
-  let mediaRows = readMediaSheet(mediaSheetPath);
-  let mRow = mediaRows.find((m) => m.wp_id === attachmentId);
-  if (mRow?.migration_status === "Pass" && mRow.contentstack_type === "asset" && mRow.contentstack_uid) {
-    map.set({
-      wpId: attachmentId,
-      kind: "asset",
-      assetUid: mRow.contentstack_uid,
-      sourceKey: mRow.wp_slug,
-      migratedAt: new Date().toISOString(),
-      locale,
-    });
-    return mRow.contentstack_uid;
-  }
-
-  const item = await fetchWpMediaItem(wp, attachmentId);
-  if (kindFromMimeType(item.mime_type) !== "image") {
-    throw new Error(
-      `Featured media ${attachmentId} is not an image (${item.mime_type}); map as asset or adjust WordPress.`
-    );
-  }
-  if (!mRow) {
-    mRow = toSheetRow(item);
-    mediaRows.push(mRow);
-  }
-  const result = await migrateOneMediaRow(mRow, wp, cs, map, folderUid, locale);
-  mRow.migration_status = "Pass";
-  mRow.contentstack_uid = result.uid;
-  mRow.contentstack_type = result.type;
-  mRow.migrated_at = new Date().toISOString();
-  saveMediaSheet(mediaSheetPath, mediaRows);
-  await map.save();
-  if (result.type !== "asset") {
-    throw new Error(`Featured media ${attachmentId} resolved to ${result.type}, expected asset`);
-  }
-  return result.uid;
-}
-
-function selectContentRows(
+export function selectContentRows(
   rows: TrackingRow[],
   sheet: string,
   mode: SelectionMode,
@@ -284,7 +235,16 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
         body: p.content?.rendered ?? "",
       };
       if (featured && paths.featuredImageFieldUid) {
-        const assetUid = await ensureFeaturedAssetUid(featured, wp, cs, map, mediaSheetPath, folderUid, locale);
+        const assetUid = await ensureWpAttachmentImageAssetUid(
+          featured,
+          wp,
+          cs,
+          map,
+          mediaSheetPath,
+          folderUid,
+          locale,
+          "Featured image"
+        );
         entryPayload[paths.featuredImageFieldUid] = [{ uid: assetUid }];
       }
       if (featured) {

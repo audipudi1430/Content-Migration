@@ -11,6 +11,7 @@
     "pipeline:extract": "tsx src/pipeline/cli.ts extract",
     "pipeline:migrate-media": "tsx src/pipeline/cli.ts migrate-media",
     "pipeline:migrate-content": "tsx src/pipeline/cli.ts migrate-content",
+    "pipeline:migrate-blog-authors": "tsx src/pipeline/cli.ts migrate-blog-authors",
     "pipeline:publish": "tsx src/pipeline/cli.ts publish",
     "typecheck": "tsc --noEmit"
   },

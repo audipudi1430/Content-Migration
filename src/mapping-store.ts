@@ -7,6 +7,7 @@ export type WpEntityKind =
   | "asset"
   | "post"
   | "page"
+  | "story_author"
   | "custom";
 
 export type MappingRecord = {
