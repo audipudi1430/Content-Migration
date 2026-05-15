@@ -26,6 +26,12 @@ export function inferWpIdFromUrl(url: string): number | undefined {
       const n = Number(m[1]);
       if (Number.isFinite(n) && n > 0) return Math.floor(n);
     }
+    for (const key of ["cat", "category", "story_category", "term", "tag_id"]) {
+      const raw = u.searchParams.get(key);
+      if (!raw) continue;
+      const n = Number(String(raw).trim());
+      if (Number.isFinite(n) && n > 0) return Math.floor(n);
+    }
     const tail = u.pathname.replace(/\/+$/, "").split("/").pop();
     if (tail && /^\d{1,12}$/.test(tail)) {
       const n = Number(tail);
@@ -49,7 +55,22 @@ export function extractSlugFromPublicUrl(url: string): string | undefined {
     for (let i = parts.length - 1; i >= 0; i--) {
       const seg = parts[i]!;
       const low = seg.toLowerCase();
-      if (["feed", "embed", "trackback", "page", "wp-admin", "wp-content", "wp-json", "index.php"].includes(low)) {
+      if (
+        [
+          "feed",
+          "embed",
+          "trackback",
+          "page",
+          "wp-admin",
+          "wp-content",
+          "uploads",
+          "wp-json",
+          "index.php",
+          "category",
+          "tag",
+          "author",
+        ].includes(low)
+      ) {
         continue;
       }
       if (/^\d{1,12}$/.test(seg)) continue;
@@ -60,6 +81,78 @@ export function extractSlugFromPublicUrl(url: string): string | undefined {
     return undefined;
   }
   return undefined;
+}
+
+/** Taxonomy / category slug from common query parameters (pretty permalinks still use path first). */
+function slugFromTaxonomyQueryParams(url: string): string | undefined {
+  try {
+    const u = new URL(url.trim());
+    for (const key of [
+      "story_category",
+      "category_name",
+      "product_cat",
+      "product_tag",
+      "tag",
+      "slug",
+    ]) {
+      const v = u.searchParams.get(key)?.trim();
+      if (v && !/^\d+$/.test(v) && v.length < 200) return v;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Strip WordPress image size suffix before extension: `file-300x200.jpg` → `file.jpg`. */
+export function stripImageSizeSuffix(filename: string): string {
+  return filename.replace(/-(\d+)x(\d+)(\.[a-z0-9]+)?$/i, "$3");
+}
+
+/** Filename segment for `/wp-content/uploads/.../file.jpg` URLs. */
+function uploadFilenameFromUrl(url: string): string | undefined {
+  try {
+    const u = new URL(url.trim());
+    if (!/\/wp-content\/uploads\//i.test(u.pathname)) return undefined;
+    const seg = u.pathname.split("/").filter(Boolean).pop();
+    return seg ? decodeURIComponent(seg) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Ordered slug candidates for REST `?slug=` (and media search), from a public URL.
+ * Covers uploads filenames, dimension suffixes, and extension-less slugs.
+ */
+export function collectSlugCandidates(url: string, rowKind: "media" | "content"): string[] {
+  const out: string[] = [];
+  const q = slugFromTaxonomyQueryParams(url);
+  if (q) out.push(q);
+  const pub = extractSlugFromPublicUrl(url);
+  if (pub) {
+    out.push(pub);
+    out.push(stripImageSizeSuffix(pub));
+    const noExt = pub.replace(/\.[a-z0-9]{2,5}$/i, "");
+    if (noExt && noExt !== pub) {
+      out.push(noExt);
+      out.push(stripImageSizeSuffix(noExt));
+    }
+  }
+  if (rowKind === "media") {
+    const fn = uploadFilenameFromUrl(url);
+    if (fn) {
+      out.push(fn);
+      out.push(stripImageSizeSuffix(fn));
+      const noExt = fn.replace(/\.[a-z0-9]{2,5}$/i, "");
+      if (noExt && noExt !== fn) {
+        out.push(noExt);
+        out.push(stripImageSizeSuffix(noExt));
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return out.map((s) => s.trim()).filter((s) => s.length > 1 && s.length < 200 && !seen.has(s) && seen.add(s));
 }
 
 function trailingNumericPathId(url: string): number | undefined {
@@ -85,6 +178,63 @@ async function resolveIdBySlug(wp: WordPressClient, collectionBase: string, slug
   const pick = exact ?? items[0];
   const id = pick?.id;
   if (typeof id === "number" && Number.isFinite(id) && id > 0) return Math.floor(id);
+  return undefined;
+}
+
+function normalizeComparableUrl(u: string): string {
+  try {
+    const x = new URL(u.trim());
+    x.hash = "";
+    x.search = "";
+    return decodeURIComponent(x.pathname.replace(/\/+$/, "")).toLowerCase();
+  } catch {
+    return u.trim().toLowerCase();
+  }
+}
+
+/**
+ * Resolve a media attachment id when the sheet URL is a direct file URL (uploads) or CDN mirror.
+ * Uses REST `search=` then matches `source_url` / `link` to the input URL.
+ */
+async function resolveMediaIdFromSourceUrl(
+  wp: WordPressClient,
+  collectionBase: string,
+  url: string
+): Promise<number | undefined> {
+  const want = normalizeComparableUrl(url);
+  if (!want.includes("/wp-content/uploads/") && !want.match(/\.(jpe?g|png|gif|webp|svg|pdf|mp4|mov|webm)$/i)) {
+    return undefined;
+  }
+  const stem =
+    uploadFilenameFromUrl(url)?.replace(/\.[a-z0-9]{2,5}$/i, "") ??
+    extractSlugFromPublicUrl(url)?.replace(/\.[a-z0-9]{2,5}$/i, "") ??
+    "";
+  if (stem.length < 2) return undefined;
+  const searchTerm = stem.slice(0, 60);
+  let items: Array<Record<string, unknown>> = [];
+  try {
+    items = await wp.getJson<Array<Record<string, unknown>>>(collectionBase, {
+      search: searchTerm,
+      per_page: "50",
+    });
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(items) || items.length === 0) return undefined;
+  for (const it of items) {
+    const id = it.id;
+    if (typeof id !== "number" || !Number.isFinite(id) || id <= 0) continue;
+    const sourceUrl = typeof it.source_url === "string" ? it.source_url : "";
+    const link = typeof it.link === "string" ? it.link : "";
+    const guid = it.guid && typeof it.guid === "object" && it.guid !== null && "rendered" in it.guid
+      ? String((it.guid as { rendered?: string }).rendered ?? "")
+      : "";
+    for (const cand of [sourceUrl, link, guid]) {
+      if (!cand) continue;
+      const n = normalizeComparableUrl(cand);
+      if (n === want || want.endsWith(n) || n.endsWith(want)) return Math.floor(id);
+    }
+  }
   return undefined;
 }
 
@@ -182,8 +332,14 @@ export async function enrichTrackingRowsFromWordPress(
       if (row.wp_id <= 0 && row.url.trim()) {
         let id = inferWpIdFromUrl(row.url);
         if (!id) {
-          const slug = extractSlugFromPublicUrl(row.url);
-          if (slug) id = await resolveIdBySlug(wp, base, slug);
+          const candidates = collectSlugCandidates(row.url, row.row_kind);
+          for (const slug of candidates) {
+            id = await resolveIdBySlug(wp, base, slug);
+            if (id) break;
+          }
+        }
+        if (!id && row.row_kind === "media") {
+          id = await resolveMediaIdFromSourceUrl(wp, base, row.url);
         }
         if (!id) {
           const n = trailingNumericPathId(row.url);
