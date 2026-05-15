@@ -25,6 +25,16 @@ export type TrackingRow = {
   extracted_at: string;
   /** Contentstack CMA URL for the created entry or asset after Pass (empty otherwise). */
   target_url: string;
+  /** WordPress slug from REST (extract enrich). */
+  wp_slug: string;
+  /** Human-readable title/name from REST (extract enrich). */
+  wp_title: string;
+  wp_status: string;
+  wp_type: string;
+  /** WordPress canonical link from REST (extract enrich). */
+  wp_link: string;
+  /** Compact JSON snapshot of useful REST fields (extract enrich). */
+  wp_extract_json: string;
 };
 
 export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRow, "source_sheet" | "row_kind" | "url">): TrackingRow {
@@ -47,5 +57,11 @@ export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRo
     source_columns_json: partial.source_columns_json ?? "",
     extracted_at: partial.extracted_at ?? "",
     target_url: partial.target_url ?? "",
+    wp_slug: partial.wp_slug ?? "",
+    wp_title: partial.wp_title ?? "",
+    wp_status: partial.wp_status ?? "",
+    wp_type: partial.wp_type ?? "",
+    wp_link: partial.wp_link ?? "",
+    wp_extract_json: partial.wp_extract_json ?? "",
   };
 }

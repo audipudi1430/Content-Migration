@@ -7,34 +7,16 @@ import {
   wpRestPathForSourceTab,
 } from "../config-pipeline.js";
 import { upsertTrackingDoc, getTrackingCollection, closeMongo } from "../mongo/tracking-repository.js";
+import { loadConfig } from "../config.js";
+import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
 import { mergeTrackingRows, readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
 import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./types.js";
 import { stringArg } from "./args.js";
 import { trackingRowToMongoDoc } from "./tracking-sync.js";
+import { inferWpIdFromUrl, enrichTrackingRowsFromWordPress } from "./wp-extract-enrich.js";
 
 function normHeader(h: string): string {
   return h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, "_");
-}
-
-function inferWpIdFromUrl(url: string): number | undefined {
-  const t = url.trim();
-  if (!t) return undefined;
-  try {
-    const u = new URL(t);
-    const p = u.searchParams.get("p");
-    if (p) {
-      const n = Number(p);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-    const att = u.searchParams.get("attachment_id");
-    if (att) {
-      const n = Number(att);
-      if (Number.isFinite(n) && n > 0) return n;
-    }
-  } catch {
-    return undefined;
-  }
-  return undefined;
 }
 
 const URL_KEYS = new Set(["url", "link", "permalink", "post_url", "page_url", "source_url", "href"]);
@@ -210,6 +192,25 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     const { rows, missingIdUrls } = parseSheetRows(name, matrix, kind, restForRow, ct);
     incoming.push(...rows);
     allMissing.push(...missingIdUrls);
+  }
+
+  try {
+    if (process.env.MIGRATION_EXTRACT_SKIP_WP_ENRICH !== "1") {
+      const cfg = loadConfig();
+      const auth =
+        cfg.wp.user && cfg.wp.applicationPassword
+          ? basicAuthHeader(cfg.wp.user, cfg.wp.applicationPassword)
+          : undefined;
+      const wp = new WordPressClient(cfg.wp.baseUrl, auth);
+      const maxJson =
+        Number(process.env.MIGRATION_WP_EXTRACT_JSON_MAX_BYTES ?? "80000") || 80_000;
+      await enrichTrackingRowsFromWordPress(incoming, wp, maxJson);
+      const noId = incoming.filter((r) => r.wp_id <= 0 && r.url.trim()).length;
+      console.error(`[extract] WordPress REST enrich: ${incoming.length - noId}/${incoming.length} rows have wp_id.`);
+    }
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    console.error(`[extract] WordPress enrich skipped (configure WP_BASE_URL + token, or set MIGRATION_EXTRACT_SKIP_WP_ENRICH=1): ${m}`);
   }
 
   for (const u of allMissing) {

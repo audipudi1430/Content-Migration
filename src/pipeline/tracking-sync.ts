@@ -1,11 +1,11 @@
 import type { MongoConfig, PipelinePathsConfig } from "../config-pipeline.js";
-import { upsertTrackingDoc, trackingDocId, getTrackingCollection } from "../mongo/tracking-repository.js";
+import { upsertTrackingDoc, trackingDocId, getTrackingCollection, trackingRowStableMergeKey } from "../mongo/tracking-repository.js";
 import type { MigrationTrackingDoc } from "../mongo/tracking-repository.js";
 import { readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
 import type { TrackingRow } from "./types.js";
 
 function rowKey(r: TrackingRow): string {
-  return `${r.source_sheet}|${r.row_kind}|${r.wp_id}|${r.url}`;
+  return trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
 }
 
 export function trackingRowToMongoDoc(
@@ -34,6 +34,12 @@ export function trackingRowToMongoDoc(
     sourceColumnsJson: row.source_columns_json || undefined,
     extractedAt: row.extracted_at || undefined,
     targetUrl: row.target_url || undefined,
+    wpSlug: row.wp_slug || undefined,
+    wpTitle: row.wp_title || undefined,
+    wpStatus: row.wp_status || undefined,
+    wpType: row.wp_type || undefined,
+    wpLink: row.wp_link || undefined,
+    wpExtractJson: row.wp_extract_json || undefined,
   };
 }
 
