@@ -18,6 +18,9 @@ function rowFromRecord(r: Record<string, unknown>): TrackingRow {
     migration_message: String(r.migration_message ?? ""),
     published_at: String(r.published_at ?? ""),
     updated_at: String(r.updated_at ?? ""),
+    source_columns_json: String(r.source_columns_json ?? ""),
+    extracted_at: String(r.extracted_at ?? ""),
+    target_url: String(r.target_url ?? ""),
   };
 }
 
@@ -58,6 +61,9 @@ export function mergeTrackingRows(existing: TrackingRow[], incoming: TrackingRow
         contentstack_entry_uid: keepProgress ? prev.contentstack_entry_uid : r.contentstack_entry_uid,
         contentstack_asset_uid: keepProgress ? prev.contentstack_asset_uid : r.contentstack_asset_uid,
         migration_message: keepProgress ? prev.migration_message : r.migration_message,
+        target_url: keepProgress ? prev.target_url : r.target_url,
+        source_columns_json: r.source_columns_json,
+        extracted_at: r.extracted_at,
         published_at: prev.published_at || r.published_at,
         updated_at: r.updated_at,
       });

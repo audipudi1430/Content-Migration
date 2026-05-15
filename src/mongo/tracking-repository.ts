@@ -20,6 +20,11 @@ export type MigrationTrackingDoc = {
   migrationMessage?: string;
   publishedAt?: string;
   updatedAt: string;
+  /** JSON snapshot of source workbook columns at extract. */
+  sourceColumnsJson?: string;
+  extractedAt?: string;
+  /** Contentstack CMA URL for the entry or asset after successful migration. */
+  targetUrl?: string;
 };
 
 export function trackingDocId(

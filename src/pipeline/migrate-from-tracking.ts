@@ -11,6 +11,7 @@ import { closeMongo } from "../mongo/tracking-repository.js";
 import { initPipelineEnv, parseSelection, type SelectionMode } from "./args.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import type { TrackingRow } from "./types.js";
+import { buildContentstackEntryTargetUrl, buildContentstackMediaMigrationTargetUrl } from "./cs-target-url.js";
 
 type WpRestPost = {
   id: number;
@@ -45,6 +46,8 @@ function selectMediaTrackingRows(
     selected = selected.filter((r) => set.has(r.wp_id));
   } else if (mode === "failed") {
     selected = selected.filter((r) => r.migration_status === "Fail");
+  } else {
+    selected = selected.filter((r) => r.migration_status === "Pending" || r.migration_status === "Fail");
   }
   return selected.slice(opts.offset, opts.offset + opts.limit);
 }
@@ -107,6 +110,13 @@ export async function runMigrateMediaFromTracking(argv: string[]): Promise<void>
           mRow.contentstack_type !== "asset" ? mRow.contentstack_uid : trackRef.contentstack_entry_uid;
         trackRef.migration_message = "Already migrated in media sheet";
         trackRef.updated_at = new Date().toISOString();
+        trackRef.target_url = buildContentstackMediaMigrationTargetUrl({
+          apiHost: cfg.contentstack.apiHost,
+          stackApiKey: cfg.contentstack.stackApiKey,
+          resultType: mRow.contentstack_type || "asset",
+          uid: mRow.contentstack_uid,
+          locale,
+        });
         await persistOneRow(paths, allTracking, trackRef, mongoCfg);
         completed += 1;
         continue;
@@ -125,12 +135,20 @@ export async function runMigrateMediaFromTracking(argv: string[]): Promise<void>
       trackRef.contentstack_entry_uid = result.type !== "asset" ? result.uid : "";
       trackRef.migration_message = "";
       trackRef.updated_at = new Date().toISOString();
+      trackRef.target_url = buildContentstackMediaMigrationTargetUrl({
+        apiHost: cfg.contentstack.apiHost,
+        stackApiKey: cfg.contentstack.stackApiKey,
+        resultType: result.type,
+        uid: result.uid,
+        locale,
+      });
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);
       completed += 1;
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 800) : String(e);
       trackRef.migration_status = "Fail";
       trackRef.migration_message = msg;
+      trackRef.target_url = "";
       trackRef.updated_at = new Date().toISOString();
       if (mRow) {
         mRow.migration_status = "Fail";
@@ -228,6 +246,13 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
         trackRef.migration_status = "Pass";
         trackRef.migration_message = "Already in JSON map";
         trackRef.updated_at = new Date().toISOString();
+        trackRef.target_url = buildContentstackEntryTargetUrl({
+          apiHost: cfg.contentstack.apiHost,
+          stackApiKey: cfg.contentstack.stackApiKey,
+          contentTypeUid: ctUid,
+          entryUid: existing.contentstackUid,
+          locale,
+        });
         await persistOneRow(paths, allTracking, trackRef, mongoCfg);
         ok += 1;
         continue;
@@ -274,12 +299,20 @@ export async function runMigrateContentFromTracking(argv: string[]): Promise<voi
       trackRef.migration_status = "Pass";
       trackRef.migration_message = "";
       trackRef.updated_at = new Date().toISOString();
+      trackRef.target_url = buildContentstackEntryTargetUrl({
+        apiHost: cfg.contentstack.apiHost,
+        stackApiKey: cfg.contentstack.stackApiKey,
+        contentTypeUid: ctUid,
+        entryUid: entry.uid,
+        locale,
+      });
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);
       ok += 1;
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 800) : String(e);
       trackRef.migration_status = "Fail";
       trackRef.migration_message = msg;
+      trackRef.target_url = "";
       trackRef.updated_at = new Date().toISOString();
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);
       console.error(`[content] wp_id=${tRow.wp_id} FAIL: ${msg}`);

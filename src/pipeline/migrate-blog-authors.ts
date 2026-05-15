@@ -14,6 +14,7 @@ import {
 } from "./blog-author-config.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
+import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 
 type WpStoryAuthor = {
   id: number;
@@ -129,12 +130,20 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         trackRef.migration_status = "Pass";
         trackRef.migration_message = "Already in JSON map";
         trackRef.updated_at = new Date().toISOString();
+        trackRef.target_url = buildContentstackEntryTargetUrl({
+          apiHost: cfg.contentstack.apiHost,
+          stackApiKey: cfg.contentstack.stackApiKey,
+          contentTypeUid,
+          entryUid: existing.contentstackUid,
+          locale,
+        });
         await persistOneRow(paths, allTracking, trackRef, mongoCfg);
         ok += 1;
         continue;
       }
 
-      const rel = `${paths.wpRestPath.replace(/^\//, "")}/${tRow.wp_id}`;
+      const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
+      const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
       const term = await wp.getJson<WpStoryAuthor>(rel);
       const name = pickString(term.name) || `Author ${term.id}`;
       const slug = pickString(term.slug) || String(term.id);
@@ -205,12 +214,20 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       trackRef.migration_status = "Pass";
       trackRef.migration_message = "";
       trackRef.updated_at = new Date().toISOString();
+      trackRef.target_url = buildContentstackEntryTargetUrl({
+        apiHost: cfg.contentstack.apiHost,
+        stackApiKey: cfg.contentstack.stackApiKey,
+        contentTypeUid,
+        entryUid: entry.uid,
+        locale,
+      });
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);
       ok += 1;
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 800) : String(e);
       trackRef.migration_status = "Fail";
       trackRef.migration_message = msg;
+      trackRef.target_url = "";
       trackRef.updated_at = new Date().toISOString();
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);
       console.error(`[blog-author] wp_id=${tRow.wp_id} FAIL: ${msg}`);

@@ -19,6 +19,12 @@ export type TrackingRow = {
   migration_message: string;
   published_at: string;
   updated_at: string;
+  /** JSON: all columns from the source Excel row at last extract (header → value). */
+  source_columns_json: string;
+  /** ISO time when this row was last written by extract. */
+  extracted_at: string;
+  /** Contentstack CMA URL for the created entry or asset after Pass (empty otherwise). */
+  target_url: string;
 };
 
 export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRow, "source_sheet" | "row_kind" | "url">): TrackingRow {
@@ -38,5 +44,8 @@ export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRo
     migration_message: partial.migration_message ?? "",
     published_at: partial.published_at ?? "",
     updated_at: partial.updated_at ?? now,
+    source_columns_json: partial.source_columns_json ?? "",
+    extracted_at: partial.extracted_at ?? "",
+    target_url: partial.target_url ?? "",
   };
 }

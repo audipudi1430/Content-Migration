@@ -6,11 +6,11 @@ import {
   loadPipelinePaths,
   wpRestPathForSourceTab,
 } from "../config-pipeline.js";
-import { upsertTrackingDoc, trackingDocId, getTrackingCollection, closeMongo } from "../mongo/tracking-repository.js";
-import type { MigrationTrackingDoc } from "../mongo/tracking-repository.js";
+import { upsertTrackingDoc, getTrackingCollection, closeMongo } from "../mongo/tracking-repository.js";
 import { mergeTrackingRows, readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
 import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./types.js";
 import { stringArg } from "./args.js";
+import { trackingRowToMongoDoc } from "./tracking-sync.js";
 
 function normHeader(h: string): string {
   return h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, "_");
@@ -60,6 +60,33 @@ function pickColumn(headers: string[], keys: Set<string>): string | undefined {
   return undefined;
 }
 
+function rowObjectFromMatrix(headerRow: string[], line: string[]): Record<string, string> {
+  const o: Record<string, string> = {};
+  for (let j = 0; j < headerRow.length; j++) {
+    const key = String(headerRow[j] ?? "").trim();
+    if (!key) continue;
+    o[key] = String(line[j] ?? "").trim();
+  }
+  return o;
+}
+
+function captureSourceColumnsJson(o: Record<string, string>, maxLen = 100_000): string {
+  if (Object.keys(o).length === 0) return "{}";
+  let cur: Record<string, string> = { ...o };
+  let raw = JSON.stringify(cur);
+  while (raw.length > maxLen && Object.keys(cur).length > 0) {
+    const ks = Object.keys(cur);
+    const drop = ks[ks.length - 1]!;
+    const { [drop]: _, ...rest } = cur;
+    cur = rest;
+    raw = JSON.stringify(cur);
+  }
+  if (raw.length > maxLen) {
+    return JSON.stringify({ _truncated: "true", _approx_len: String(JSON.stringify(o).length) });
+  }
+  return raw;
+}
+
 function sheetToMatrix(ws: XLSX.WorkSheet): string[][] {
   return XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" }) as string[][];
 }
@@ -93,6 +120,9 @@ function parseSheetRows(
       const inferred = inferWpIdFromUrl(url);
       if (inferred) wpId = inferred;
     }
+    const rowObject = rowObjectFromMatrix(headerRow, line);
+    const sourceColumnsJson = captureSourceColumnsJson(rowObject);
+    const extractedAt = new Date().toISOString();
     if (!Number.isFinite(wpId) || wpId <= 0) {
       if (url) missingIdUrls.push(url);
       rows.push(
@@ -105,6 +135,8 @@ function parseSheetRows(
           content_type_uid: contentTypeUid,
           migration_status: "NoWpId",
           migration_message: "WordPress ID missing and could not be inferred from URL",
+          source_columns_json: sourceColumnsJson,
+          extracted_at: extractedAt,
         })
       );
       continue;
@@ -118,6 +150,8 @@ function parseSheetRows(
         wp_rest_path: wpRestPath,
         content_type_uid: contentTypeUid,
         migration_status: "Pending",
+        source_columns_json: sourceColumnsJson,
+        extracted_at: extractedAt,
       })
     );
   }
@@ -189,26 +223,7 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   if (coll) {
     const now = new Date().toISOString();
     for (const r of merged) {
-      const doc: MigrationTrackingDoc = {
-        _id: trackingDocId(paths.runId, r.source_sheet, r.row_kind, r.wp_id || 0, r.url),
-        runId: paths.runId,
-        envLabel: paths.envLabel,
-        sourceSheet: r.source_sheet,
-        rowKind: r.row_kind,
-        url: r.url,
-        wpId: r.wp_id,
-        wpRestPath: r.wp_rest_path,
-        contentTypeUid: r.content_type_uid || undefined,
-        featuredMediaWpId: r.featured_media_wp_id ? Number(r.featured_media_wp_id) : undefined,
-        migrationStatus: r.migration_status,
-        publishStatus: r.publish_status,
-        contentstackEntryUid: r.contentstack_entry_uid || undefined,
-        contentstackAssetUid: r.contentstack_asset_uid || undefined,
-        migrationMessage: r.migration_message || undefined,
-        publishedAt: r.published_at || undefined,
-        updatedAt: now,
-      };
-      await upsertTrackingDoc(coll, doc);
+      await upsertTrackingDoc(coll, trackingRowToMongoDoc(paths, r, now));
     }
   }
 
