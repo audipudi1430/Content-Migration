@@ -83,11 +83,13 @@ export function extractSlugFromPublicUrl(url: string): string | undefined {
   return undefined;
 }
 
-/** Taxonomy / category slug from common query parameters (pretty permalinks still use path first). */
+/** Slug from query string (taxonomies, CPTs, author archives). */
 function slugFromTaxonomyQueryParams(url: string): string | undefined {
   try {
     const u = new URL(url.trim());
     for (const key of [
+      "author_name",
+      "story_author",
       "story_category",
       "category_name",
       "product_cat",
@@ -97,6 +99,31 @@ function slugFromTaxonomyQueryParams(url: string): string | undefined {
     ]) {
       const v = u.searchParams.get(key)?.trim();
       if (v && !/^\d+$/.test(v) && v.length < 200) return v;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Slug immediately after a path prefix like `/author/`, `/news/author/`, `/story_author/`.
+ * More reliable than "last path segment" when the URL has trailing junk or unusual structure.
+ */
+export function extractSlugAfterPathKeyword(url: string): string | undefined {
+  const keywords = ["story_author", "authors", "author", "writer"];
+  try {
+    const u = new URL(url.trim());
+    const parts = u.pathname.split("/").map((s) => decodeURIComponent(s)).filter(Boolean);
+    const lower = parts.map((p) => p.toLowerCase());
+    for (const kw of keywords) {
+      const idx = lower.indexOf(kw.toLowerCase());
+      if (idx >= 0 && idx + 1 < parts.length) {
+        const seg = parts[idx + 1]!;
+        if (["feed", "embed", "page"].includes(seg.toLowerCase())) continue;
+        if (/^\d{1,12}$/.test(seg)) continue;
+        if (seg.length > 1 && seg.length < 200) return seg;
+      }
     }
   } catch {
     return undefined;
@@ -127,6 +154,8 @@ function uploadFilenameFromUrl(url: string): string | undefined {
  */
 export function collectSlugCandidates(url: string, rowKind: "media" | "content"): string[] {
   const out: string[] = [];
+  const afterKw = extractSlugAfterPathKeyword(url);
+  if (afterKw) out.push(afterKw);
   const q = slugFromTaxonomyQueryParams(url);
   if (q) out.push(q);
   const pub = extractSlugFromPublicUrl(url);
@@ -177,6 +206,25 @@ async function resolveIdBySlug(wp: WordPressClient, collectionBase: string, slug
   const exact = items.find((x) => String(x.slug ?? "").toLowerCase() === slug.toLowerCase());
   const pick = exact ?? items[0];
   const id = pick?.id;
+  if (typeof id === "number" && Number.isFinite(id) && id > 0) return Math.floor(id);
+  return undefined;
+}
+
+/** When `slug=` returns empty (some stacks/plugins), try `search=` and require exact slug match in results. */
+async function resolveIdBySearchExactSlug(
+  wp: WordPressClient,
+  collectionBase: string,
+  slug: string
+): Promise<number | undefined> {
+  if (slug.length < 1 || slug.length > 200) return undefined;
+  const items = await wp.getJson<Array<{ id?: number; slug?: string }>>(collectionBase, {
+    search: slug.slice(0, 80),
+    per_page: "50",
+  });
+  if (!Array.isArray(items) || items.length === 0) return undefined;
+  const want = slug.toLowerCase();
+  const exact = items.find((x) => String(x.slug ?? "").toLowerCase() === want);
+  const id = exact?.id;
   if (typeof id === "number" && Number.isFinite(id) && id > 0) return Math.floor(id);
   return undefined;
 }
@@ -336,6 +384,10 @@ export async function enrichTrackingRowsFromWordPress(
           for (const slug of candidates) {
             id = await resolveIdBySlug(wp, base, slug);
             if (id) break;
+            if (row.row_kind === "content") {
+              id = await resolveIdBySearchExactSlug(wp, base, slug);
+              if (id) break;
+            }
           }
         }
         if (!id && row.row_kind === "media") {

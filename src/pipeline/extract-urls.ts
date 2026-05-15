@@ -175,7 +175,6 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   const mediaTab = paths.mediaTabName;
 
   const incoming: TrackingRow[] = [];
-  const allMissing: string[] = [];
 
   const sheetNames = wb.SheetNames.filter((n) => n.trim().length > 0);
   if (!sheetNames.includes(mediaTab)) {
@@ -189,9 +188,8 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     const kind: TrackingRowKind = name === mediaTab ? "media" : "content";
     const restForRow = wpRestPathForSourceTab(paths, name, kind);
     const ct = contentTypeUidForSourceTab(paths, name, kind);
-    const { rows, missingIdUrls } = parseSheetRows(name, matrix, kind, restForRow, ct);
+    const { rows } = parseSheetRows(name, matrix, kind, restForRow, ct);
     incoming.push(...rows);
-    allMissing.push(...missingIdUrls);
   }
 
   try {
@@ -213,8 +211,11 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     console.error(`[extract] WordPress enrich skipped (configure WP_BASE_URL + token, or set MIGRATION_EXTRACT_SKIP_WP_ENRICH=1): ${m}`);
   }
 
-  for (const u of allMissing) {
-    console.error(`[extract] Missing WordPress ID for URL: ${u}`);
+  const stillMissing = incoming.filter((r) => r.wp_id <= 0 && r.url.trim());
+  for (const r of stillMissing) {
+    console.error(
+      `[extract] Still no WordPress ID (after enrich): sheet=${r.source_sheet} url=${r.url} rest=${r.wp_rest_path} msg=${r.migration_message || "-"}`
+    );
   }
 
   const existing = readTrackingSheet(paths.trackingWorkbook, paths.trackingSheet);
@@ -230,6 +231,6 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
 
   await closeMongo();
   console.error(
-    `[extract] Wrote ${merged.length} rows to ${paths.trackingWorkbook} (sheet "${paths.trackingSheet}"). Missing-id URLs logged: ${allMissing.length}. MongoDB: ${mongoCfg.enabled ? "synced" : "skipped (set MONGODB_URI)"}.`
+    `[extract] Wrote ${merged.length} rows to ${paths.trackingWorkbook} (sheet "${paths.trackingSheet}"). Rows still without wp_id: ${stillMissing.length}. MongoDB: ${mongoCfg.enabled ? "synced" : "skipped (set MONGODB_URI)"}.`
   );
 }
