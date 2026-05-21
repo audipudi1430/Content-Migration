@@ -12,7 +12,7 @@ async function main() {
 
   if (!cmd || cmd === "help" || cmd === "--help") {
     console.error(`Usage (always pass --env=... or --env-file=...):
-  npm run pipeline:extract -- --env=stack-a
+  npm run pipeline:extract -- --env=stack-a [--tab=blog_author] [--concurrency=8] [--per-tab-tracking=1]
   npm run pipeline:migrate-media -- --env=stack-a [--mode=all|single|ids|failed] [--limit=25] [--offset=0] [--ids=1,2]
   npm run pipeline:migrate-content -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2]
   npm run pipeline:migrate-blog-authors -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=365]
@@ -24,6 +24,7 @@ Env (see env/.env.migration-pipeline.example):
   MIGRATION_SHEET_WP_REST_PATHS (per-tab WP REST, e.g. categories=/wp-json/wp/v2/story_category;blog_author=/wp-json/wp/v2/story_author),
   MIGRATION_SHEET_CONTENT_TYPE_UID (per-tab Contentstack UID, same sheet=value;... format),
   MIGRATION_CONTENT_TYPE_UID, MONGODB_URI, MONGODB_COLLECTION, MIGRATION_RUN_ID,
+  MIGRATION_EXTRACT_TAB, MIGRATION_EXTRACT_CONCURRENCY, MIGRATION_TRACKING_PER_TAB_SHEETS,
   MIGRATION_EXTRACT_SKIP_WP_ENRICH, MIGRATION_WP_EXTRACT_JSON_MAX_BYTES,
   CONTENTSTACK_PUBLISH_ENVIRONMENTS, CONTENTSTACK_PUBLISH_LOCALES, CS_FEATURED_IMAGE_FIELD_UID,
   CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE, CONTENTSTACK_ASSET_TARGET_URL_TEMPLATE,

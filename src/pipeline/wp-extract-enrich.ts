@@ -1,4 +1,5 @@
 import type { WordPressClient } from "../wordpress/client.js";
+import { mapWithConcurrency } from "./async-pool.js";
 import type { TrackingRow } from "./types.js";
 
 /** Normalize URL for stable row / Mongo identity (trim, drop trailing slashes, collapse spaces). */
@@ -363,60 +364,78 @@ function applySnapshot(row: TrackingRow, snap: Record<string, unknown>, maxJsonB
   row.wp_extract_json = capJson(snap, maxJsonBytes);
 }
 
+async function enrichOneTrackingRow(
+  row: TrackingRow,
+  wp: WordPressClient,
+  maxJsonBytes: number
+): Promise<void> {
+  const base = wpCollectionBase(row.wp_rest_path);
+  if (!base.includes("wp-json")) return;
+
+  try {
+    if (row.wp_id <= 0 && row.url.trim()) {
+      let id = inferWpIdFromUrl(row.url);
+      if (!id) {
+        const candidates = collectSlugCandidates(row.url, row.row_kind);
+        for (const slug of candidates) {
+          id = await resolveIdBySlug(wp, base, slug);
+          if (id) break;
+          if (row.row_kind === "content") {
+            id = await resolveIdBySearchExactSlug(wp, base, slug);
+            if (id) break;
+          }
+        }
+      }
+      if (!id && row.row_kind === "media") {
+        id = await resolveMediaIdFromSourceUrl(wp, base, row.url);
+      }
+      if (!id) {
+        const n = trailingNumericPathId(row.url);
+        if (n && (await probeExists(wp, base, n))) id = n;
+      }
+      if (id && id > 0) {
+        row.wp_id = id;
+        row.migration_status = "Pending";
+        row.migration_message = "";
+      }
+    }
+
+    if (row.wp_id > 0) {
+      const raw = await wp.getJson<unknown>(`${base}/${row.wp_id}`);
+      const snap = summarizeWpEntity(raw);
+      if (Object.keys(snap).length === 0) {
+        row.migration_message = "extract wp: unrecognized REST entity shape";
+      } else {
+        applySnapshot(row, snap, maxJsonBytes);
+      }
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    row.migration_message = `extract wp: ${msg}`.slice(0, 800);
+    if (row.wp_id <= 0) row.migration_status = "NoWpId";
+  }
+}
+
 /**
  * Resolve missing IDs from URLs, then fetch each row from WordPress REST and fill `wp_*` snapshot fields.
- * Mutates rows in place. Skips rows with empty `wp_rest_path` or invalid collection path.
+ * Mutates rows in place. Uses parallel HTTP when `concurrency` > 1.
  */
 export async function enrichTrackingRowsFromWordPress(
   rows: TrackingRow[],
   wp: WordPressClient,
-  maxJsonBytes = 80_000
+  maxJsonBytes = 80_000,
+  concurrency = 1,
+  onProgress?: (done: number, total: number) => void
 ): Promise<void> {
-  for (const row of rows) {
-    const base = wpCollectionBase(row.wp_rest_path);
-    if (!base.includes("wp-json")) continue;
+  const total = rows.length;
+  let done = 0;
+  const report = () => {
+    done += 1;
+    onProgress?.(done, total);
+  };
 
-    try {
-      if (row.wp_id <= 0 && row.url.trim()) {
-        let id = inferWpIdFromUrl(row.url);
-        if (!id) {
-          const candidates = collectSlugCandidates(row.url, row.row_kind);
-          for (const slug of candidates) {
-            id = await resolveIdBySlug(wp, base, slug);
-            if (id) break;
-            if (row.row_kind === "content") {
-              id = await resolveIdBySearchExactSlug(wp, base, slug);
-              if (id) break;
-            }
-          }
-        }
-        if (!id && row.row_kind === "media") {
-          id = await resolveMediaIdFromSourceUrl(wp, base, row.url);
-        }
-        if (!id) {
-          const n = trailingNumericPathId(row.url);
-          if (n && (await probeExists(wp, base, n))) id = n;
-        }
-        if (id && id > 0) {
-          row.wp_id = id;
-          row.migration_status = "Pending";
-          row.migration_message = "";
-        }
-      }
-
-      if (row.wp_id > 0) {
-        const raw = await wp.getJson<unknown>(`${base}/${row.wp_id}`);
-        const snap = summarizeWpEntity(raw);
-        if (Object.keys(snap).length === 0) {
-          row.migration_message = "extract wp: unrecognized REST entity shape";
-        } else {
-          applySnapshot(row, snap, maxJsonBytes);
-        }
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      row.migration_message = `extract wp: ${msg}`.slice(0, 800);
-      if (row.wp_id <= 0) row.migration_status = "NoWpId";
-    }
-  }
+  await mapWithConcurrency(rows, concurrency, async (row) => {
+    await enrichOneTrackingRow(row, wp, maxJsonBytes);
+    report();
+  });
 }

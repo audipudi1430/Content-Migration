@@ -90,3 +90,77 @@ export function mergeTrackingRows(existing: TrackingRow[], incoming: TrackingRow
     return a.wp_id - b.wp_id;
   });
 }
+
+/**
+ * Re-extract one source workbook tab: drop prior tracking rows for that `source_sheet`, then merge new rows.
+ * Other tabs in `existing` are unchanged.
+ */
+export function mergeTrackingRowsReplacingSourceTab(
+  existing: TrackingRow[],
+  incoming: TrackingRow[],
+  sourceSheet: string
+): TrackingRow[] {
+  const kept = existing.filter((r) => r.source_sheet !== sourceSheet);
+  const freshForTab = mergeTrackingRows([], incoming);
+  return mergeTrackingRows(kept, freshForTab);
+}
+
+/** Excel sheet name for per-tab tracking view (max 31 chars, no invalid chars). */
+export function trackingSheetNameForSourceTab(sourceSheet: string): string {
+  const raw = sourceSheet.trim() || "tab";
+  const safe = raw.replace(/[\\/?*[\]:]/g, "_").slice(0, 31);
+  return safe.length > 0 ? safe : "tab";
+}
+
+/** Read all tracking rows from every sheet in the workbook (for consolidated + per-tab sheets). */
+export function readAllTrackingRowsFromWorkbook(path: string): TrackingRow[] {
+  if (!existsSync(path)) return [];
+  const wb = XLSX.read(readFileSync(path));
+  const byKey = new Map<string, TrackingRow>();
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    if (!ws) continue;
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" }).map(rowFromRecord);
+    for (const r of rows) {
+      if (!r.url && r.wp_id <= 0) continue;
+      const k = trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+      byKey.set(k, r);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => {
+    const s = a.source_sheet.localeCompare(b.source_sheet);
+    if (s !== 0) return s;
+    return a.wp_id - b.wp_id;
+  });
+}
+
+/** Write per-tab tracking sheets plus the main consolidated sheet. */
+export function writeTrackingWorkbook(
+  path: string,
+  consolidatedSheetName: string,
+  allRows: TrackingRow[],
+  perTabSheets: boolean
+): void {
+  const wb = existsSync(path) ? XLSX.read(readFileSync(path)) : XLSX.utils.book_new();
+
+  const writeOne = (sheetName: string, rows: TrackingRow[]) => {
+    const ws = XLSX.utils.json_to_sheet(rows);
+    if (wb.SheetNames.includes(sheetName)) {
+      const idx = wb.SheetNames.indexOf(sheetName);
+      delete wb.Sheets[sheetName];
+      wb.SheetNames.splice(idx, 1);
+    }
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  };
+
+  writeOne(consolidatedSheetName, allRows);
+  if (perTabSheets) {
+    const tabs = [...new Set(allRows.map((r) => r.source_sheet).filter(Boolean))].sort();
+    for (const tab of tabs) {
+      const tabRows = allRows.filter((r) => r.source_sheet === tab);
+      writeOne(trackingSheetNameForSourceTab(tab), tabRows);
+    }
+  }
+
+  writeFileSync(path, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}

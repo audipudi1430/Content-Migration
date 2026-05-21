@@ -9,9 +9,14 @@ import {
 import { upsertTrackingDoc, getTrackingCollection, closeMongo } from "../mongo/tracking-repository.js";
 import { loadConfig } from "../config.js";
 import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
-import { mergeTrackingRows, readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
+import {
+  mergeTrackingRows,
+  mergeTrackingRowsReplacingSourceTab,
+  readAllTrackingRowsFromWorkbook,
+  writeTrackingWorkbook,
+} from "./tracking-io.js";
 import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./types.js";
-import { stringArg } from "./args.js";
+import { numberArg, stringArg } from "./args.js";
 import { trackingRowToMongoDoc } from "./tracking-sync.js";
 import { inferWpIdFromUrl, enrichTrackingRowsFromWordPress } from "./wp-extract-enrich.js";
 
@@ -79,9 +84,8 @@ function parseSheetRows(
   rowKind: TrackingRowKind,
   wpRestPath: string,
   contentTypeUid: string
-): { rows: TrackingRow[]; missingIdUrls: string[] } {
-  const missingIdUrls: string[] = [];
-  if (matrix.length === 0) return { rows: [], missingIdUrls };
+): TrackingRow[] {
+  if (matrix.length === 0) return [];
   const headerRow = matrix[0].map((c) => String(c));
   const headers = headerRow.filter(Boolean);
   const urlCol = pickColumn(headers, URL_KEYS);
@@ -106,7 +110,6 @@ function parseSheetRows(
     const sourceColumnsJson = captureSourceColumnsJson(rowObject);
     const extractedAt = new Date().toISOString();
     if (!Number.isFinite(wpId) || wpId <= 0) {
-      if (url) missingIdUrls.push(url);
       rows.push(
         emptyTrackingRow({
           source_sheet: sheetName,
@@ -137,7 +140,79 @@ function parseSheetRows(
       })
     );
   }
-  return { rows, missingIdUrls };
+  return rows;
+}
+
+/** Match workbook tab name (exact, then case-insensitive). */
+export function resolveWorkbookTabName(sheetNames: string[], requested: string): string {
+  const t = requested.trim();
+  if (!t) throw new Error("Tab name is empty");
+  if (sheetNames.includes(t)) return t;
+  const lower = t.toLowerCase();
+  const hit = sheetNames.find((n) => n.toLowerCase() === lower);
+  if (hit) return hit;
+  throw new Error(`Tab "${requested}" not found in source workbook. Available: ${sheetNames.join(", ")}`);
+}
+
+function extractConcurrency(argv: string[]): number {
+  const fromArg = numberArg(argv, "--concurrency");
+  const fromEnv = Number(process.env.MIGRATION_EXTRACT_CONCURRENCY ?? "6");
+  const n = fromArg ?? (Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : 6);
+  return Math.max(1, Math.min(32, Math.floor(n)));
+}
+
+function perTabTrackingSheetsEnabled(argv: string[]): boolean {
+  const arg = stringArg(argv, "--per-tab-tracking");
+  if (arg === "0" || arg === "false") return false;
+  if (arg === "1" || arg === "true") return true;
+  return process.env.MIGRATION_TRACKING_PER_TAB_SHEETS !== "0";
+}
+
+async function enrichIncoming(
+  incoming: TrackingRow[],
+  argv: string[],
+  tabLabel: string
+): Promise<void> {
+  if (process.env.MIGRATION_EXTRACT_SKIP_WP_ENRICH === "1") return;
+  const concurrency = extractConcurrency(argv);
+  try {
+    const cfg = loadConfig();
+    const auth =
+      cfg.wp.user && cfg.wp.applicationPassword
+        ? basicAuthHeader(cfg.wp.user, cfg.wp.applicationPassword)
+        : undefined;
+    const wp = new WordPressClient(cfg.wp.baseUrl, auth);
+    const maxJson = Number(process.env.MIGRATION_WP_EXTRACT_JSON_MAX_BYTES ?? "80000") || 80_000;
+    let lastLogged = 0;
+    console.error(
+      `[extract] ${tabLabel}: WordPress REST enrich (${incoming.length} rows, concurrency=${concurrency})…`
+    );
+    await enrichTrackingRowsFromWordPress(incoming, wp, maxJson, concurrency, (done, total) => {
+      if (done - lastLogged >= 25 || done === total) {
+        lastLogged = done;
+        console.error(`[extract] ${tabLabel}: enrich progress ${done}/${total}`);
+      }
+    });
+    const noId = incoming.filter((r) => r.wp_id <= 0 && r.url.trim()).length;
+    console.error(
+      `[extract] ${tabLabel}: enrich done — ${incoming.length - noId}/${incoming.length} rows have wp_id.`
+    );
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    console.error(
+      `[extract] ${tabLabel}: WordPress enrich skipped (WP_BASE_URL + token, or MIGRATION_EXTRACT_SKIP_WP_ENRICH=1): ${m}`
+    );
+  }
+}
+
+function logStillMissing(incoming: TrackingRow[], tabLabel: string): TrackingRow[] {
+  const stillMissing = incoming.filter((r) => r.wp_id <= 0 && r.url.trim());
+  for (const r of stillMissing) {
+    console.error(
+      `[extract] Still no WordPress ID (${tabLabel}): sheet=${r.source_sheet} url=${r.url} rest=${r.wp_rest_path} msg=${r.migration_message || "-"}`
+    );
+  }
+  return stillMissing;
 }
 
 export async function runExtractUrls(argv: string[] = []): Promise<void> {
@@ -151,6 +226,7 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   const startSheetOverride = stringArg(argv, "--start-sheet");
   const ctOverride = stringArg(argv, "--content-type-uid");
   const runIdOverride = stringArg(argv, "--run-id");
+  const tabOverride = stringArg(argv, "--tab");
 
   if (srcOverride) process.env.MIGRATION_SOURCE_WORKBOOK = srcOverride;
   if (trackOverride) process.env.MIGRATION_TRACKING_WORKBOOK = trackOverride;
@@ -162,6 +238,7 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   if (startSheetOverride) process.env.MIGRATION_START_SHEET = startSheetOverride;
   if (ctOverride) process.env.MIGRATION_CONTENT_TYPE_UID = ctOverride;
   if (runIdOverride) process.env.MIGRATION_RUN_ID = runIdOverride;
+  if (tabOverride) process.env.MIGRATION_EXTRACT_TAB = tabOverride;
 
   const paths = loadPipelinePaths();
   if (!existsSync(paths.sourceWorkbook)) {
@@ -169,68 +246,66 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   }
   const mongoCfg = loadMongoConfig();
   const coll = await getTrackingCollection(mongoCfg);
+  const tabFilterEarly =
+    stringArg(argv, "--tab")?.trim() || process.env.MIGRATION_EXTRACT_TAB?.trim() || "";
+  const perTabSheets = tabFilterEarly ? true : perTabTrackingSheetsEnabled(argv);
 
   const srcBuf = readFileSync(paths.sourceWorkbook);
   const wb = XLSX.read(srcBuf);
   const mediaTab = paths.mediaTabName;
-
-  const incoming: TrackingRow[] = [];
-
   const sheetNames = wb.SheetNames.filter((n) => n.trim().length > 0);
-  if (!sheetNames.includes(mediaTab)) {
+
+  const tabFilter = tabFilterEarly;
+
+  const tabsToProcess: string[] = tabFilter
+    ? [resolveWorkbookTabName(sheetNames, tabFilter)]
+    : sheetNames;
+
+  if (!tabFilter && !sheetNames.includes(mediaTab)) {
     console.error(`Warning: media tab "${mediaTab}" not found in source workbook. Available: ${sheetNames.join(", ")}`);
   }
 
-  for (const name of sheetNames) {
+  const incoming: TrackingRow[] = [];
+
+  for (const name of tabsToProcess) {
     const ws = wb.Sheets[name];
     if (!ws) continue;
     const matrix = sheetToMatrix(ws);
     const kind: TrackingRowKind = name === mediaTab ? "media" : "content";
     const restForRow = wpRestPathForSourceTab(paths, name, kind);
     const ct = contentTypeUidForSourceTab(paths, name, kind);
-    const { rows } = parseSheetRows(name, matrix, kind, restForRow, ct);
+    const rows = parseSheetRows(name, matrix, kind, restForRow, ct);
     incoming.push(...rows);
+    console.error(`[extract] Parsed tab "${name}": ${rows.length} rows (${kind}, rest=${restForRow})`);
   }
 
-  try {
-    if (process.env.MIGRATION_EXTRACT_SKIP_WP_ENRICH !== "1") {
-      const cfg = loadConfig();
-      const auth =
-        cfg.wp.user && cfg.wp.applicationPassword
-          ? basicAuthHeader(cfg.wp.user, cfg.wp.applicationPassword)
-          : undefined;
-      const wp = new WordPressClient(cfg.wp.baseUrl, auth);
-      const maxJson =
-        Number(process.env.MIGRATION_WP_EXTRACT_JSON_MAX_BYTES ?? "80000") || 80_000;
-      await enrichTrackingRowsFromWordPress(incoming, wp, maxJson);
-      const noId = incoming.filter((r) => r.wp_id <= 0 && r.url.trim()).length;
-      console.error(`[extract] WordPress REST enrich: ${incoming.length - noId}/${incoming.length} rows have wp_id.`);
-    }
-  } catch (e) {
-    const m = e instanceof Error ? e.message : String(e);
-    console.error(`[extract] WordPress enrich skipped (configure WP_BASE_URL + token, or set MIGRATION_EXTRACT_SKIP_WP_ENRICH=1): ${m}`);
-  }
+  const tabLabel = tabFilter ? `tab=${tabsToProcess[0]}` : `all tabs (${tabsToProcess.length})`;
+  await enrichIncoming(incoming, argv, tabLabel);
+  const stillMissing = logStillMissing(incoming, tabLabel);
 
-  const stillMissing = incoming.filter((r) => r.wp_id <= 0 && r.url.trim());
-  for (const r of stillMissing) {
-    console.error(
-      `[extract] Still no WordPress ID (after enrich): sheet=${r.source_sheet} url=${r.url} rest=${r.wp_rest_path} msg=${r.migration_message || "-"}`
-    );
-  }
+  const existing = readAllTrackingRowsFromWorkbook(paths.trackingWorkbook);
+  const merged = tabFilter
+    ? mergeTrackingRowsReplacingSourceTab(existing, incoming, tabsToProcess[0]!)
+    : mergeTrackingRows(existing, incoming);
 
-  const existing = readTrackingSheet(paths.trackingWorkbook, paths.trackingSheet);
-  const merged = mergeTrackingRows(existing, incoming);
-  writeTrackingSheet(paths.trackingWorkbook, paths.trackingSheet, merged);
+  writeTrackingWorkbook(paths.trackingWorkbook, paths.trackingSheet, merged, perTabSheets);
 
   if (coll) {
     const now = new Date().toISOString();
-    for (const r of merged) {
+    const mongoRows = tabFilter
+      ? merged.filter((r) => r.source_sheet === tabsToProcess[0])
+      : merged;
+    for (const r of mongoRows) {
       await upsertTrackingDoc(coll, trackingRowToMongoDoc(paths, r, now));
     }
+    console.error(`[extract] MongoDB: upserted ${mongoRows.length} document(s).`);
   }
 
   await closeMongo();
+  const tabRows = tabFilter ? merged.filter((r) => r.source_sheet === tabsToProcess[0]) : merged;
   console.error(
-    `[extract] Wrote ${merged.length} rows to ${paths.trackingWorkbook} (sheet "${paths.trackingSheet}"). Rows still without wp_id: ${stillMissing.length}. MongoDB: ${mongoCfg.enabled ? "synced" : "skipped (set MONGODB_URI)"}.`
+    `[extract] Wrote ${merged.length} total rows to ${paths.trackingWorkbook} (consolidated sheet "${paths.trackingSheet}"${perTabSheets ? ", plus one sheet per source tab" : ""}). ` +
+      `${tabLabel}: ${tabRows.length} rows in this run; still without wp_id: ${stillMissing.length}. ` +
+      `MongoDB: ${mongoCfg.enabled ? "synced" : "skipped (set MONGODB_URI)"}.`
   );
 }
