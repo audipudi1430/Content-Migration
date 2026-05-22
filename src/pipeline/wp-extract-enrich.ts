@@ -1,4 +1,9 @@
 import type { WordPressClient } from "../wordpress/client.js";
+import {
+  extractMediaMetadata,
+  findWordPressMediaByUrlWithClient,
+  type WpMediaRestItem,
+} from "../wordpress/find-media-by-url.js";
 import { mapWithConcurrency } from "./async-pool.js";
 import type { TrackingRow } from "./types.js";
 
@@ -230,63 +235,6 @@ async function resolveIdBySearchExactSlug(
   return undefined;
 }
 
-function normalizeComparableUrl(u: string): string {
-  try {
-    const x = new URL(u.trim());
-    x.hash = "";
-    x.search = "";
-    return decodeURIComponent(x.pathname.replace(/\/+$/, "")).toLowerCase();
-  } catch {
-    return u.trim().toLowerCase();
-  }
-}
-
-/**
- * Resolve a media attachment id when the sheet URL is a direct file URL (uploads) or CDN mirror.
- * Uses REST `search=` then matches `source_url` / `link` to the input URL.
- */
-async function resolveMediaIdFromSourceUrl(
-  wp: WordPressClient,
-  collectionBase: string,
-  url: string
-): Promise<number | undefined> {
-  const want = normalizeComparableUrl(url);
-  if (!want.includes("/wp-content/uploads/") && !want.match(/\.(jpe?g|png|gif|webp|svg|pdf|mp4|mov|webm)$/i)) {
-    return undefined;
-  }
-  const stem =
-    uploadFilenameFromUrl(url)?.replace(/\.[a-z0-9]{2,5}$/i, "") ??
-    extractSlugFromPublicUrl(url)?.replace(/\.[a-z0-9]{2,5}$/i, "") ??
-    "";
-  if (stem.length < 2) return undefined;
-  const searchTerm = stem.slice(0, 60);
-  let items: Array<Record<string, unknown>> = [];
-  try {
-    items = await wp.getJson<Array<Record<string, unknown>>>(collectionBase, {
-      search: searchTerm,
-      per_page: "50",
-    });
-  } catch {
-    return undefined;
-  }
-  if (!Array.isArray(items) || items.length === 0) return undefined;
-  for (const it of items) {
-    const id = it.id;
-    if (typeof id !== "number" || !Number.isFinite(id) || id <= 0) continue;
-    const sourceUrl = typeof it.source_url === "string" ? it.source_url : "";
-    const link = typeof it.link === "string" ? it.link : "";
-    const guid = it.guid && typeof it.guid === "object" && it.guid !== null && "rendered" in it.guid
-      ? String((it.guid as { rendered?: string }).rendered ?? "")
-      : "";
-    for (const cand of [sourceUrl, link, guid]) {
-      if (!cand) continue;
-      const n = normalizeComparableUrl(cand);
-      if (n === want || want.endsWith(n) || n.endsWith(want)) return Math.floor(id);
-    }
-  }
-  return undefined;
-}
-
 async function probeExists(wp: WordPressClient, collectionBase: string, id: number): Promise<boolean> {
   try {
     await wp.getJson<unknown>(`${collectionBase}/${id}`);
@@ -364,6 +312,71 @@ function applySnapshot(row: TrackingRow, snap: Record<string, unknown>, maxJsonB
   row.wp_extract_json = capJson(snap, maxJsonBytes);
 }
 
+function applyMediaMetadataToRow(
+  row: TrackingRow,
+  meta: ReturnType<typeof extractMediaMetadata>,
+  maxJsonBytes: number
+): void {
+  row.wp_id = meta.wordpress_id;
+  row.wp_slug = meta.slug;
+  row.wp_title = meta.title;
+  row.wp_link = meta.source_url;
+  row.wp_type = meta.media_type;
+  row.wp_status = meta.mime_type;
+  row.migration_status = "Pending";
+  row.migration_message = "";
+  row.wp_extract_json = capJson(
+    {
+      ...meta,
+      match_note: "Resolved via upload path / source_url (slug not used as primary key)",
+    },
+    maxJsonBytes
+  );
+}
+
+/**
+ * Media rows: match by uploads-relative path and source_url, not slug.
+ * @see ../wordpress/find-media-by-url.ts
+ */
+async function enrichMediaTrackingRow(
+  row: TrackingRow,
+  wp: WordPressClient,
+  maxJsonBytes: number
+): Promise<void> {
+  const base = wpCollectionBase(row.wp_rest_path);
+
+  if (!row.url.trim()) {
+    if (row.wp_id <= 0) {
+      row.migration_status = "NoWpId";
+      row.migration_message = "extract media: empty URL";
+    }
+    return;
+  }
+
+  const matched = await findWordPressMediaByUrlWithClient(row.url, wp);
+  if (matched) {
+    applyMediaMetadataToRow(row, extractMediaMetadata(matched), maxJsonBytes);
+    return;
+  }
+
+  if (row.wp_id > 0 && base.includes("wp-json")) {
+    try {
+      const raw = await wp.getJson<WpMediaRestItem>(`${base}/${row.wp_id}`);
+      applyMediaMetadataToRow(row, extractMediaMetadata(raw), maxJsonBytes);
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      row.migration_message = `extract media: ${msg}`.slice(0, 800);
+      row.migration_status = "NoWpId";
+      return;
+    }
+  }
+
+  row.migration_status = "NoWpId";
+  row.migration_message =
+    "extract media: no attachment matched media_details.file or source_url (search+filter; slug is fallback only)";
+}
+
 async function enrichOneTrackingRow(
   row: TrackingRow,
   wp: WordPressClient,
@@ -371,6 +384,17 @@ async function enrichOneTrackingRow(
 ): Promise<void> {
   const base = wpCollectionBase(row.wp_rest_path);
   if (!base.includes("wp-json")) return;
+
+  if (row.row_kind === "media") {
+    try {
+      await enrichMediaTrackingRow(row, wp, maxJsonBytes);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      row.migration_message = `extract media: ${msg}`.slice(0, 800);
+      if (row.wp_id <= 0) row.migration_status = "NoWpId";
+    }
+    return;
+  }
 
   try {
     if (row.wp_id <= 0 && row.url.trim()) {
@@ -385,9 +409,6 @@ async function enrichOneTrackingRow(
             if (id) break;
           }
         }
-      }
-      if (!id && row.row_kind === "media") {
-        id = await resolveMediaIdFromSourceUrl(wp, base, row.url);
       }
       if (!id) {
         const n = trailingNumericPathId(row.url);
