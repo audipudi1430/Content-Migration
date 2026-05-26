@@ -1,7 +1,11 @@
 import type { MongoConfig, PipelinePathsConfig } from "../config-pipeline.js";
 import { upsertTrackingDoc, trackingDocId, getTrackingCollection, trackingRowStableMergeKey } from "../mongo/tracking-repository.js";
 import type { MigrationTrackingDoc } from "../mongo/tracking-repository.js";
-import { readAllTrackingRowsFromWorkbook, readTrackingSheet, writeTrackingSheet } from "./tracking-io.js";
+import {
+  readAllTrackingRowsFromWorkbook,
+  readTrackingSheet,
+  writeTrackingWorkbook,
+} from "./tracking-io.js";
 import type { TrackingRow } from "./types.js";
 
 function rowKey(r: TrackingRow): string {
@@ -52,7 +56,10 @@ export async function persistOneRow(
   const k = rowKey(row);
   const idx = allRows.findIndex((r) => rowKey(r) === k);
   if (idx >= 0) allRows[idx] = row;
-  writeTrackingSheet(paths.trackingWorkbook, paths.trackingSheet, allRows);
+  const perTab =
+    process.env.MIGRATION_TRACKING_PER_TAB_SHEETS !== "0" &&
+    Boolean(row.source_sheet?.trim());
+  writeTrackingWorkbook(paths.trackingWorkbook, paths.trackingSheet, allRows, perTab);
   const coll = await getTrackingCollection(mongoCfg);
   if (!coll) return;
   const now = new Date().toISOString();

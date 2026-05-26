@@ -9,8 +9,15 @@ export type BlogAuthorFieldUids = {
   authorTitle: string;
   authorName: string;
   description: string;
-  /** Field UID for a single file/image reference in Contentstack. */
+  /**
+   * Top-level field UID for author image (often a Global field on the content type).
+   * When `authorImageIsGlobal` is true, asset is set on the nested key below.
+   */
   authorImage: string;
+  /** Nested field UID inside the Global field module that holds the file reference. */
+  authorImageGlobalInnerField: string;
+  /** If true, `authorImage` is sent as `{ [innerField]: [{ uid }] }` not a top-level file array. */
+  authorImageIsGlobal: boolean;
   twitterLink: string;
   linkedinLink: string;
   facebookLink: string;
@@ -29,6 +36,9 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     authorName: process.env.BLOG_AUTHOR_FIELD_AUTHOR_NAME ?? "author_name",
     description: process.env.BLOG_AUTHOR_FIELD_DESCRIPTION ?? "description",
     authorImage: process.env.BLOG_AUTHOR_FIELD_AUTHOR_IMAGE ?? "author_image",
+    authorImageGlobalInnerField:
+      process.env.BLOG_AUTHOR_GLOBAL_AUTHOR_IMAGE_INNER_FIELD?.trim() || "image",
+    authorImageIsGlobal: process.env.BLOG_AUTHOR_AUTHOR_IMAGE_IS_GLOBAL !== "0",
     twitterLink: process.env.BLOG_AUTHOR_FIELD_TWITTER_LINK ?? "twitter_link",
     linkedinLink: process.env.BLOG_AUTHOR_FIELD_LINKEDIN_LINK ?? "linkedin_link",
     facebookLink: process.env.BLOG_AUTHOR_FIELD_FACEBOOK_LINK ?? "facebook_link",

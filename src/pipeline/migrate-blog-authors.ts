@@ -4,7 +4,6 @@ import { ContentstackManagementClient } from "../contentstack/client.js";
 import { loadConfig } from "../config.js";
 import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
 import { ensureAssetFolderUid } from "../media/migrate-media-core.js";
-import { ensureWpAttachmentImageAssetUid } from "./wp-media-asset.js";
 import { closeMongo } from "../mongo/tracking-repository.js";
 import { initPipelineEnv, parseSelection, type SelectionMode } from "./args.js";
 import {
@@ -15,12 +14,14 @@ import {
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
+import { setAuthorDescription, setAuthorImageField, setFileAssetRef } from "./blog-author-payload.js";
+import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 
 type WpStoryAuthor = {
   id: number;
   name: string;
   slug: string;
-  description?: string;
+  description?: string | { rendered?: string };
   link?: string;
   meta?: Record<string, unknown>;
   yoast_head_json?: {
@@ -48,11 +49,6 @@ function setScalar(entry: Record<string, unknown>, fieldUid: string, value: unkn
   if (value === undefined || value === null) return;
   if (typeof value === "string" && value.trim() === "") return;
   entry[fieldUid] = value;
-}
-
-/** Contentstack single-file field: one-element array of `{ uid: assetUid }`. */
-function setAssetRef(entry: Record<string, unknown>, fieldUid: string, assetUid: string): void {
-  entry[fieldUid] = [{ uid: assetUid }];
 }
 
 function seoTitle(term: WpStoryAuthor): string {
@@ -161,7 +157,7 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       setScalar(entryPayload, fields.url, authorUrlPath);
       setScalar(entryPayload, fields.authorTitle, name);
       setScalar(entryPayload, fields.authorName, name);
-      setScalar(entryPayload, fields.description, pickString(term.description));
+      setAuthorDescription(entryPayload, fields.description, term.description);
       setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
       setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
       setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
@@ -170,32 +166,40 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       setScalar(entryPayload, fields.pageOwner, pageOwnerDefault);
 
       if (avatarId) {
-        const uid = await ensureWpAttachmentImageAssetUid(
-          avatarId,
+        const { assetUid, source } = await resolveWpImageAssetUid({
+          attachmentId: avatarId,
           wp,
           cs,
           map,
           mediaSheetPath,
           folderUid,
           locale,
-          `Author ${term.id} avatar`
-        );
-        setAssetRef(entryPayload, fields.authorImage, uid);
+          purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
+          paths,
+          allTracking,
+        });
+        setAuthorImageField(entryPayload, fields, assetUid);
         trackRef.featured_media_wp_id = String(avatarId);
+        trackRef.contentstack_asset_uid = assetUid;
+        if (source === "tracking") {
+          console.error(`[blog-author] wp_id=${term.id} avatar asset ${assetUid} from media_urls tracking`);
+        }
       }
 
       if (metaImageId) {
-        const uid = await ensureWpAttachmentImageAssetUid(
-          metaImageId,
+        const { assetUid } = await resolveWpImageAssetUid({
+          attachmentId: metaImageId,
           wp,
           cs,
           map,
           mediaSheetPath,
           folderUid,
           locale,
-          `Author ${term.id} meta image`
-        );
-        setAssetRef(entryPayload, fields.metaImage, uid);
+          purpose: `Author ${term.id} meta image`,
+          paths,
+          allTracking,
+        });
+        setFileAssetRef(entryPayload, fields.metaImage, assetUid);
       }
 
       const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
