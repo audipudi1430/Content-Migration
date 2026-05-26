@@ -31,4 +31,14 @@ export function initPipelineEnv(argv: string[]): void {
   initEnvFromArgs(argv);
 }
 
+/** CLI `--update` / `--update=1` or env `UPDATE_FLAG_ENV` = 1|true */
+export function parseUpdateFlag(argv: string[], envKey: string): boolean {
+  if (argv.includes("--update")) return true;
+  const arg = stringArg(argv, "--update");
+  if (arg === "1" || arg === "true") return true;
+  if (arg === "0" || arg === "false") return false;
+  const env = process.env[envKey]?.trim().toLowerCase();
+  return env === "1" || env === "true" || env === "yes";
+}
+
 export { stringArg, numberArg };

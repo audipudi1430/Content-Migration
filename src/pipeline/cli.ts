@@ -15,7 +15,7 @@ async function main() {
   npm run pipeline:extract -- --env=stack-a [--tab=blog_author] [--concurrency=8] [--per-tab-tracking=1]
   npm run pipeline:migrate-media -- --env=stack-a [--mode=all|single|ids|failed] [--limit=25] [--offset=0] [--ids=1,2]
   npm run pipeline:migrate-content -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2]
-  npm run pipeline:migrate-blog-authors -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=365]
+  npm run pipeline:migrate-blog-authors -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=365] [--update]
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
 
 Env (see env/.env.migration-pipeline.example):
@@ -28,7 +28,7 @@ Env (see env/.env.migration-pipeline.example):
   MIGRATION_EXTRACT_SKIP_WP_ENRICH, MIGRATION_WP_EXTRACT_JSON_MAX_BYTES,
   CONTENTSTACK_PUBLISH_ENVIRONMENTS, CONTENTSTACK_PUBLISH_LOCALES, CS_FEATURED_IMAGE_FIELD_UID,
   CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE, CONTENTSTACK_ASSET_TARGET_URL_TEMPLATE,
-  story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*
+  story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*, BLOG_AUTHOR_UPDATE, --update
 `);
     process.exit(0);
   }

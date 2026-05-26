@@ -5,17 +5,20 @@ import { loadConfig } from "../config.js";
 import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
 import { ensureAssetFolderUid } from "../media/migrate-media-core.js";
 import { closeMongo } from "../mongo/tracking-repository.js";
-import { initPipelineEnv, parseSelection, type SelectionMode } from "./args.js";
+import { initPipelineEnv, parseSelection, parseUpdateFlag, type SelectionMode } from "./args.js";
 import {
   blogAuthorPageUrlPath,
   loadBlogAuthorContentTypeUid,
   loadBlogAuthorFieldUids,
+  type BlogAuthorFieldUids,
 } from "./blog-author-config.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 import { setAuthorDescription, setAuthorImageField, setFileAssetRef } from "./blog-author-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import type { PipelinePathsConfig } from "../config-pipeline.js";
+import type { TrackingRow } from "./types.js";
 
 type WpStoryAuthor = {
   id: number;
@@ -65,9 +68,101 @@ function seoDescription(term: WpStoryAuthor): string {
   return pickString(term.yoast_head_json?.description);
 }
 
+type BuildAuthorPayloadCtx = {
+  term: WpStoryAuthor;
+  fields: BlogAuthorFieldUids;
+  pageOwnerDefault: string;
+  wp: WordPressClient;
+  cs: ContentstackManagementClient;
+  map: MappingStore;
+  mediaSheetPath: string;
+  folderUid: string;
+  locale: string | undefined;
+  paths: PipelinePathsConfig;
+  allTracking: TrackingRow[];
+  trackRef: TrackingRow;
+};
+
+async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<{
+  payload: Record<string, unknown>;
+  slug: string;
+}> {
+  const { term, fields, trackRef } = ctx;
+  const name = pickString(term.name) || `Author ${term.id}`;
+  const slug = pickString(term.slug) || String(term.id);
+  const authorUrlPath = blogAuthorPageUrlPath(slug);
+  const meta = term.meta ?? {};
+
+  const avatarId = pickPositiveInt(meta.avatar_image_id);
+  const metaImageId = pickPositiveInt(meta.downloadable_image_id);
+
+  const entryPayload: Record<string, unknown> = {
+    title: name,
+  };
+
+  setScalar(entryPayload, fields.cmsAssetName, name);
+  setScalar(entryPayload, fields.url, authorUrlPath);
+  setScalar(entryPayload, fields.authorTitle, name);
+  setScalar(entryPayload, fields.authorName, name);
+  setAuthorDescription(entryPayload, fields.description, term.description);
+  setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
+  setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
+  setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
+  setScalar(entryPayload, fields.seoTitleTag, seoTitle(term));
+  setScalar(entryPayload, fields.metaDescription, seoDescription(term));
+  setScalar(entryPayload, fields.pageOwner, ctx.pageOwnerDefault);
+
+  if (avatarId) {
+    const { assetUid, source } = await resolveWpImageAssetUid({
+      attachmentId: avatarId,
+      wp: ctx.wp,
+      cs: ctx.cs,
+      map: ctx.map,
+      mediaSheetPath: ctx.mediaSheetPath,
+      folderUid: ctx.folderUid,
+      locale: ctx.locale,
+      purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
+      paths: ctx.paths,
+      allTracking: ctx.allTracking,
+    });
+    setAuthorImageField(entryPayload, fields, assetUid);
+    trackRef.featured_media_wp_id = String(avatarId);
+    trackRef.contentstack_asset_uid = assetUid;
+    if (source === "tracking") {
+      console.error(`[blog-author] wp_id=${term.id} avatar asset ${assetUid} from media_urls tracking`);
+    }
+  }
+
+  if (metaImageId) {
+    const { assetUid } = await resolveWpImageAssetUid({
+      attachmentId: metaImageId,
+      wp: ctx.wp,
+      cs: ctx.cs,
+      map: ctx.map,
+      mediaSheetPath: ctx.mediaSheetPath,
+      folderUid: ctx.folderUid,
+      locale: ctx.locale,
+      purpose: `Author ${term.id} meta image`,
+      paths: ctx.paths,
+      allTracking: ctx.allTracking,
+    });
+    setFileAssetRef(entryPayload, fields.metaImage, assetUid);
+  }
+
+  return { payload: entryPayload, slug };
+}
+
+function resolveExistingEntryUid(
+  mapRecord: { contentstackUid?: string } | undefined,
+  trackRef: TrackingRow
+): string | undefined {
+  return mapRecord?.contentstackUid?.trim() || trackRef.contentstack_entry_uid?.trim() || undefined;
+}
+
 export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "BLOG_AUTHOR_TRACK");
+  const updateExisting = parseUpdateFlag(argv, "BLOG_AUTHOR_UPDATE");
   const paths = loadPipelinePaths();
   const contentTypeUid = loadBlogAuthorContentTypeUid();
   if (!contentTypeUid) {
@@ -100,8 +195,18 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     );
   }
 
+  if (updateExisting) {
+    console.error("[migrate-blog-authors] --update: will PUT existing Contentstack entries when UID is known.");
+  }
+
   const allTracking = loadAllTracking(paths);
-  const selected = selectContentRows(allTracking, paths.migrateStartSheet, sel.mode as SelectionMode, sel);
+  const selected = selectContentRows(
+    allTracking,
+    paths.migrateStartSheet,
+    sel.mode as SelectionMode,
+    sel,
+    updateExisting
+  );
 
   if (selected.length === 0) {
     console.error("No story_author tracking rows selected for this sheet.");
@@ -120,17 +225,19 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     );
     if (!trackRef) continue;
     try {
-      const existing = map.get("story_author", tRow.wp_id, locale);
-      if (existing?.contentstackUid) {
-        trackRef.contentstack_entry_uid = existing.contentstackUid;
+      const mapRecord = map.get("story_author", tRow.wp_id, locale);
+      const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
+
+      if (!updateExisting && existingUid) {
+        trackRef.contentstack_entry_uid = existingUid;
         trackRef.migration_status = "Pass";
-        trackRef.migration_message = "Already in JSON map";
+        trackRef.migration_message = "Already in JSON map (use --update to refresh from WordPress)";
         trackRef.updated_at = new Date().toISOString();
         trackRef.target_url = buildContentstackEntryTargetUrl({
           apiHost: cfg.contentstack.apiHost,
           stackApiKey: cfg.contentstack.stackApiKey,
           contentTypeUid,
-          entryUid: existing.contentstackUid,
+          entryUid: existingUid,
           locale,
         });
         await persistOneRow(paths, allTracking, trackRef, mongoCfg);
@@ -141,88 +248,64 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
       const term = await wp.getJson<WpStoryAuthor>(rel);
-      const name = pickString(term.name) || `Author ${term.id}`;
-      const slug = pickString(term.slug) || String(term.id);
-      const authorUrlPath = blogAuthorPageUrlPath(slug);
-      const meta = term.meta ?? {};
 
-      const avatarId = pickPositiveInt(meta.avatar_image_id);
-      const metaImageId = pickPositiveInt(meta.downloadable_image_id);
+      const { payload: entryPayload, slug } = await buildBlogAuthorEntryPayload({
+        term,
+        fields,
+        pageOwnerDefault,
+        wp,
+        cs,
+        map,
+        mediaSheetPath,
+        folderUid,
+        locale,
+        paths,
+        allTracking,
+        trackRef,
+      });
 
-      const entryPayload: Record<string, unknown> = {
-        title: name,
-      };
+      let entryUid: string;
 
-      setScalar(entryPayload, fields.cmsAssetName, name);
-      setScalar(entryPayload, fields.url, authorUrlPath);
-      setScalar(entryPayload, fields.authorTitle, name);
-      setScalar(entryPayload, fields.authorName, name);
-      setAuthorDescription(entryPayload, fields.description, term.description);
-      setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
-      setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
-      setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
-      setScalar(entryPayload, fields.seoTitleTag, seoTitle(term));
-      setScalar(entryPayload, fields.metaDescription, seoDescription(term));
-      setScalar(entryPayload, fields.pageOwner, pageOwnerDefault);
-
-      if (avatarId) {
-        const { assetUid, source } = await resolveWpImageAssetUid({
-          attachmentId: avatarId,
-          wp,
-          cs,
-          map,
-          mediaSheetPath,
-          folderUid,
-          locale,
-          purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
-          paths,
-          allTracking,
-        });
-        setAuthorImageField(entryPayload, fields, assetUid);
-        trackRef.featured_media_wp_id = String(avatarId);
-        trackRef.contentstack_asset_uid = assetUid;
-        if (source === "tracking") {
-          console.error(`[blog-author] wp_id=${term.id} avatar asset ${assetUid} from media_urls tracking`);
-        }
+      if (updateExisting && existingUid) {
+        const updated = await cs.updateEntry(
+          contentTypeUid,
+          existingUid,
+          entryPayload as { title: string },
+          locale
+        );
+        entryUid = updated.uid ?? existingUid;
+        trackRef.migration_message = "Updated from WordPress (--update)";
+        console.error(`[blog-author] wp_id=${tRow.wp_id} UPDATED entry ${entryUid}`);
+      } else if (updateExisting && !existingUid) {
+        throw new Error(
+          "No Contentstack entry UID in map or tracking; run migrate without --update first, or set contentstack_entry_uid on the row"
+        );
+      } else {
+        const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
+        entryUid = entry.uid;
+        trackRef.migration_message = "";
+        console.error(`[blog-author] wp_id=${tRow.wp_id} CREATED entry ${entryUid}`);
       }
 
-      if (metaImageId) {
-        const { assetUid } = await resolveWpImageAssetUid({
-          attachmentId: metaImageId,
-          wp,
-          cs,
-          map,
-          mediaSheetPath,
-          folderUid,
-          locale,
-          purpose: `Author ${term.id} meta image`,
-          paths,
-          allTracking,
-        });
-        setFileAssetRef(entryPayload, fields.metaImage, assetUid);
-      }
-
-      const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
       map.set({
         wpId: tRow.wp_id,
         kind: "story_author",
-        contentstackUid: entry.uid,
+        contentstackUid: entryUid,
         sourceKey: slug,
         migratedAt: new Date().toISOString(),
         locale,
       });
       await map.save();
 
-      trackRef.contentstack_entry_uid = entry.uid;
+      trackRef.contentstack_entry_uid = entryUid;
       trackRef.content_type_uid = contentTypeUid;
       trackRef.migration_status = "Pass";
-      trackRef.migration_message = "";
       trackRef.updated_at = new Date().toISOString();
       trackRef.target_url = buildContentstackEntryTargetUrl({
         apiHost: cfg.contentstack.apiHost,
         stackApiKey: cfg.contentstack.stackApiKey,
         contentTypeUid,
-        entryUid: entry.uid,
+        entryUid,
         locale,
       });
       await persistOneRow(paths, allTracking, trackRef, mongoCfg);

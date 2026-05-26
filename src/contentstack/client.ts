@@ -138,6 +138,22 @@ export class ContentstackManagementClient {
     return { uid: json.asset.uid };
   }
 
+  async updateEntry(
+    contentTypeUid: string,
+    entryUid: string,
+    entry: { title: string; [key: string]: unknown },
+    locale?: string
+  ): Promise<{ uid: string; [k: string]: unknown }> {
+    const q = locale ? `?locale=${encodeURIComponent(locale)}` : "";
+    const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries/${encodeURIComponent(entryUid)}${q}`;
+    const body = JSON.stringify({ entry });
+    const res = await fetch(url, { method: "PUT", headers: this.headers(), body });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} PUT entry: ${text.slice(0, 800)}`);
+    const json = JSON.parse(text) as { entry: { uid: string } };
+    return json.entry as { uid: string };
+  }
+
   async getEntry(
     contentTypeUid: string,
     entryUid: string,

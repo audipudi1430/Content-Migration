@@ -169,7 +169,8 @@ export function selectContentRows(
   rows: TrackingRow[],
   sheet: string,
   mode: SelectionMode,
-  opts: { singleId?: number; ids: number[]; offset: number; limit: number }
+  opts: { singleId?: number; ids: number[]; offset: number; limit: number },
+  updateExisting = false
 ): TrackingRow[] {
   let selected = rows.filter(
     (r) => r.row_kind === "content" && r.source_sheet === sheet && r.migration_status !== "NoWpId" && r.wp_id > 0
@@ -183,6 +184,13 @@ export function selectContentRows(
     selected = selected.filter((r) => set.has(r.wp_id));
   } else if (mode === "failed") {
     selected = selected.filter((r) => r.migration_status === "Fail");
+  } else if (updateExisting) {
+    selected = selected.filter(
+      (r) =>
+        r.migration_status === "Pass" ||
+        r.migration_status === "Pending" ||
+        r.migration_status === "Fail"
+    );
   } else {
     selected = selected.filter((r) => r.migration_status === "Pending" || r.migration_status === "Fail");
   }
