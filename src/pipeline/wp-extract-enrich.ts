@@ -1,6 +1,7 @@
 import type { WordPressClient } from "../wordpress/client.js";
 import {
   extractMediaMetadata,
+  fetchWordPressMediaById,
   findWordPressMediaByUrlWithClient,
   type WpMediaRestItem,
 } from "../wordpress/find-media-by-url.js";
@@ -328,14 +329,16 @@ function applyMediaMetadataToRow(
   row.wp_extract_json = capJson(
     {
       ...meta,
-      match_note: "Resolved via upload path / source_url (slug not used as primary key)",
+      match_note: meta.match_method
+        ? `Resolved via ${meta.match_method}`
+        : "Resolved from WordPress media",
     },
     maxJsonBytes
   );
 }
 
 /**
- * Media rows: match by uploads-relative path and source_url, not slug.
+ * Media: slug + URL first, then upload path / source_url search filter, then id fallbacks.
  * @see ../wordpress/find-media-by-url.ts
  */
 async function enrichMediaTrackingRow(
@@ -349,32 +352,36 @@ async function enrichMediaTrackingRow(
     if (row.wp_id <= 0) {
       row.migration_status = "NoWpId";
       row.migration_message = "extract media: empty URL";
+    } else {
+      const raw = await fetchWordPressMediaById(wp, row.wp_id, base);
+      if (raw) applyMediaMetadataToRow(row, extractMediaMetadata(raw, "wp_id_in_url"), maxJsonBytes);
     }
     return;
   }
 
-  const matched = await findWordPressMediaByUrlWithClient(row.url, wp);
-  if (matched) {
-    applyMediaMetadataToRow(row, extractMediaMetadata(matched), maxJsonBytes);
+  const found = await findWordPressMediaByUrlWithClient(row.url, wp);
+  if (found) {
+    applyMediaMetadataToRow(row, extractMediaMetadata(found.media, found.matchMethod), maxJsonBytes);
     return;
   }
 
-  if (row.wp_id > 0 && base.includes("wp-json")) {
-    try {
-      const raw = await wp.getJson<WpMediaRestItem>(`${base}/${row.wp_id}`);
-      applyMediaMetadataToRow(row, extractMediaMetadata(raw), maxJsonBytes);
-      return;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      row.migration_message = `extract media: ${msg}`.slice(0, 800);
-      row.migration_status = "NoWpId";
+  let id = row.wp_id > 0 ? row.wp_id : inferWpIdFromUrl(row.url);
+  if (!id) {
+    const n = trailingNumericPathId(row.url);
+    if (n && base.includes("wp-json") && (await probeExists(wp, base, n))) id = n;
+  }
+
+  if (id && id > 0) {
+    const raw = await fetchWordPressMediaById(wp, id, base);
+    if (raw) {
+      applyMediaMetadataToRow(row, extractMediaMetadata(raw, "wp_id_in_url"), maxJsonBytes);
       return;
     }
   }
 
   row.migration_status = "NoWpId";
   row.migration_message =
-    "extract media: no attachment matched media_details.file or source_url (search+filter; slug is fallback only)";
+    "extract media: slug and URL match failed; upload path / source_url search found no attachment";
 }
 
 async function enrichOneTrackingRow(

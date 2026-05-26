@@ -37,6 +37,7 @@ export type WordPressMediaMetadata = {
   author: number | undefined;
   attached_to_post: number | undefined;
   slug: string;
+  match_method?: string;
 };
 
 export class WordPressMediaNotFoundError extends Error {
@@ -51,9 +52,21 @@ export class WordPressMediaNotFoundError extends Error {
 
 const MEDIA_COLLECTION = "/wp-json/wp/v2/media";
 
+export type MediaMatchMethod =
+  | "slug"
+  | "upload_path"
+  | "source_url"
+  | "filename"
+  | "source_url_loose"
+  | "wp_id_in_url";
+
+export type FindMediaResult = {
+  media: WpMediaRestItem;
+  matchMethod: MediaMatchMethod;
+};
+
 /**
  * Path under `wp-content/uploads/`, e.g. `2026/04/GettyImages-926537574-1.jpg`.
- * Returns null when the URL is not an uploads file URL.
  */
 export function getUploadRelativePath(url: string): string | null {
   const t = url.trim();
@@ -70,9 +83,6 @@ export function getUploadRelativePath(url: string): string | null {
   }
 }
 
-/**
- * Compare URLs without query/hash, trailing slashes, and with http/https treated the same.
- */
 export function normalizeUrl(url: string): string {
   const t = url.trim();
   if (!t) return "";
@@ -88,14 +98,12 @@ export function normalizeUrl(url: string): string {
   }
 }
 
-/** Basename without extension, for narrowing `?search=` only — not used as the primary match key. */
 export function getFilenameWithoutExtension(urlOrPath: string): string {
   const segment = urlOrPath.trim().split(/[/\\]/).pop() ?? urlOrPath;
   const base = segment.replace(/\.[a-z0-9]{2,5}$/i, "");
   return base.replace(/-(\d+)x(\d+)$/i, "");
 }
 
-/** WordPress often stores slugs without size suffixes or extensions; filenames on disk differ from `slug`. */
 function stripImageSizeSuffix(filename: string): string {
   return filename.replace(/-(\d+)x(\d+)(\.[a-z0-9]+)?$/i, "$3");
 }
@@ -104,7 +112,6 @@ function normalizeUploadPath(p: string): string {
   return decodeURIComponent(p.replace(/^\/+/, "").replace(/\\/g, "/")).toLowerCase();
 }
 
-/** Candidate upload-relative paths (original + size-stripped filename). */
 function uploadRelativePathCandidates(imageUrl: string): string[] {
   const rel = getUploadRelativePath(imageUrl);
   if (!rel) return [];
@@ -121,6 +128,41 @@ function uploadRelativePathCandidates(imageUrl: string): string[] {
   return [...out];
 }
 
+/**
+ * Slug candidates derived from the image URL (filename, stem, size-stripped).
+ * Used for the fast `?slug=` lookup before deeper matching.
+ */
+export function mediaSlugCandidatesFromUrl(imageUrl: string): string[] {
+  const out: string[] = [];
+  const rel = getUploadRelativePath(imageUrl);
+  if (rel) {
+    const file = rel.split("/").pop()!;
+    out.push(file, stripImageSizeSuffix(file));
+    const noExt = file.replace(/\.[a-z0-9]{2,5}$/i, "");
+    if (noExt && noExt !== file) {
+      out.push(noExt, stripImageSizeSuffix(noExt));
+    }
+  }
+  try {
+    const parts = new URL(imageUrl.trim()).pathname
+      .split("/")
+      .map((s) => decodeURIComponent(s))
+      .filter(Boolean);
+    const last = parts[parts.length - 1];
+    if (last && !/^\d{1,12}$/.test(last)) {
+      out.push(last, stripImageSizeSuffix(last));
+      const noExt = last.replace(/\.[a-z0-9]{2,5}$/i, "");
+      if (noExt) out.push(noExt, stripImageSizeSuffix(noExt));
+    }
+  } catch {
+    // ignore
+  }
+  const seen = new Set<string>();
+  return out
+    .map((s) => s.trim())
+    .filter((s) => s.length > 1 && s.length < 200 && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+}
+
 function pickRendered(field: unknown): string {
   if (typeof field === "string") return field.trim();
   if (field && typeof field === "object" && "rendered" in field) {
@@ -129,10 +171,10 @@ function pickRendered(field: unknown): string {
   return "";
 }
 
-/**
- * Structured fields for migration / tracking after a definitive media match.
- */
-export function extractMediaMetadata(media: WpMediaRestItem): WordPressMediaMetadata {
+export function extractMediaMetadata(
+  media: WpMediaRestItem,
+  matchMethod?: MediaMatchMethod
+): WordPressMediaMetadata {
   const details = media.media_details;
   return {
     wordpress_id: media.id,
@@ -150,82 +192,154 @@ export function extractMediaMetadata(media: WpMediaRestItem): WordPressMediaMeta
     author: media.author,
     attached_to_post: media.post,
     slug: media.slug ?? "",
+    match_method: matchMethod,
   };
 }
 
-type MatchTier = "upload_path" | "source_url" | "filename" | "slug";
+type StrictTier = "upload_path" | "source_url" | "filename" | "slug";
 
-function matchTier(
+function strictMatchTier(
   media: WpMediaRestItem,
   normalizedOriginal: string,
   uploadCandidates: string[],
   filenameStem: string
-): MatchTier | null {
+): StrictTier | null {
   const file = media.media_details?.file;
   if (file && uploadCandidates.length > 0) {
-    const normFile = normalizeUploadPath(file);
-    if (uploadCandidates.includes(normFile)) return "upload_path";
+    if (uploadCandidates.includes(normalizeUploadPath(file))) return "upload_path";
   }
-
   if (media.source_url && normalizedOriginal) {
     if (normalizeUrl(media.source_url) === normalizedOriginal) return "source_url";
   }
-
-  // Filename-only fallback: basename of upload_path or source_url vs original file stem.
   if (filenameStem.length >= 2) {
     const fromFile = file ? getFilenameWithoutExtension(file) : "";
     const fromSource = media.source_url ? getFilenameWithoutExtension(media.source_url) : "";
     const stem = filenameStem.toLowerCase();
     if (fromFile.toLowerCase() === stem || fromSource.toLowerCase() === stem) return "filename";
   }
-
-  // Slug is unreliable (often differs from disk path and public URL) — last resort only.
-  if (filenameStem.length >= 2 && media.slug) {
-    const slug = media.slug.toLowerCase();
-    if (slug === filenameStem.toLowerCase()) return "slug";
+  if (filenameStem.length >= 2 && media.slug?.toLowerCase() === filenameStem.toLowerCase()) {
+    return "slug";
   }
-
   return null;
 }
 
-const TIER_RANK: Record<MatchTier, number> = {
-  upload_path: 4,
-  source_url: 3,
-  filename: 2,
-  slug: 1,
-};
+function looseSourceUrlMatches(media: WpMediaRestItem, normalizedOriginal: string): boolean {
+  if (!media.source_url || !normalizedOriginal) return false;
+  const n = normalizeUrl(media.source_url);
+  return n === normalizedOriginal || normalizedOriginal.endsWith(n) || n.endsWith(normalizedOriginal);
+}
 
-function pickBestMatch(
+async function fetchMediaBySlug(
+  wp: WordPressClient,
+  slug: string
+): Promise<WpMediaRestItem[]> {
+  try {
+    const items = await wp.getJson<WpMediaRestItem[]>(MEDIA_COLLECTION, {
+      slug: slug.slice(0, 200),
+      per_page: "10",
+    });
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Phase 1: `?slug=` for each candidate from the URL filename.
+ * Accept when slug matches and the attachment corroborates the URL (or slug is an exact REST hit).
+ */
+async function findMediaBySlugFirst(
+  wp: WordPressClient,
+  imageUrl: string,
+  slugCandidates: string[],
+  normalizedOriginal: string,
+  uploadCandidates: string[],
+  filenameStem: string
+): Promise<FindMediaResult | null> {
+  for (const slug of slugCandidates) {
+    const items = await fetchMediaBySlug(wp, slug);
+    if (items.length === 0) continue;
+
+    const exactSlug = items.find((x) => String(x.slug ?? "").toLowerCase() === slug.toLowerCase());
+    const pick = exactSlug ?? items[0]!;
+    if (typeof pick.id !== "number" || pick.id <= 0) continue;
+
+    const tier = strictMatchTier(pick, normalizedOriginal, uploadCandidates, filenameStem);
+    if (tier) {
+      return { media: pick, matchMethod: tier === "slug" ? "slug" : tier };
+    }
+
+    // Slug REST hit with exact slug — use first (slug-first), URL may differ from disk path.
+    if (exactSlug) {
+      return { media: exactSlug, matchMethod: "slug" };
+    }
+
+    if (looseSourceUrlMatches(pick, normalizedOriginal)) {
+      return { media: pick, matchMethod: "source_url_loose" };
+    }
+  }
+  return null;
+}
+
+async function searchMedia(wp: WordPressClient, searchTerm: string): Promise<WpMediaRestItem[]> {
+  try {
+    const items = await wp.getJson<WpMediaRestItem[]>(MEDIA_COLLECTION, {
+      search: searchTerm.slice(0, 80),
+      per_page: "100",
+    });
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Phase 2: `?search=` then filter — upload path, source_url, filename (never blind first result).
+ */
+function findInSearchResults(
   items: WpMediaRestItem[],
   normalizedOriginal: string,
   uploadCandidates: string[],
   filenameStem: string
-): WpMediaRestItem | null {
-  let best: { item: WpMediaRestItem; tier: MatchTier } | null = null;
+): FindMediaResult | null {
+  const tierRank: Record<StrictTier, number> = {
+    upload_path: 4,
+    source_url: 3,
+    filename: 2,
+    slug: 1,
+  };
+  let best: { item: WpMediaRestItem; tier: StrictTier } | null = null;
+
   for (const item of items) {
     if (typeof item.id !== "number" || item.id <= 0) continue;
-    const tier = matchTier(item, normalizedOriginal, uploadCandidates, filenameStem);
+    const tier = strictMatchTier(item, normalizedOriginal, uploadCandidates, filenameStem);
     if (!tier) continue;
-    if (!best || TIER_RANK[tier] > TIER_RANK[best.tier]) {
+    if (!best || tierRank[tier] > tierRank[best.tier]) {
       best = { item, tier };
       if (tier === "upload_path") break;
     }
   }
-  return best?.item ?? null;
+  if (best) {
+    const method: MediaMatchMethod =
+      best.tier === "upload_path"
+        ? "upload_path"
+        : best.tier === "source_url"
+          ? "source_url"
+          : best.tier === "filename"
+            ? "filename"
+            : "slug";
+    return { media: best.item, matchMethod: method };
+  }
+
+  for (const item of items) {
+    if (typeof item.id !== "number" || item.id <= 0) continue;
+    if (looseSourceUrlMatches(item, normalizedOriginal)) {
+      return { media: item, matchMethod: "source_url_loose" };
+    }
+  }
+  return null;
 }
 
-/**
- * Find the exact media attachment for a public image/file URL.
- *
- * 1. Narrow candidates with `?search={filename}` (does not assume first hit is correct).
- * 2. Filter results: `media_details.file` (upload-relative path) → `source_url` → filename → slug.
- *
- * @param imageUrl Public or uploads URL from Excel / site HTML
- * @param wordpressBaseUrl Site root, e.g. `https://news-editor.example.com`
- * @param authHeader Optional `Basic …` for authenticated REST
- * @returns Matched media object
- * @throws WordPressMediaNotFoundError when no exact match exists in the search set
- */
 export async function findWordPressMediaByUrl(
   imageUrl: string,
   wordpressBaseUrl: string,
@@ -234,65 +348,62 @@ export async function findWordPressMediaByUrl(
   const wp = new WordPressClient(wordpressBaseUrl.replace(/\/$/, ""), authHeader);
   const found = await findWordPressMediaByUrlWithClient(imageUrl, wp);
   if (!found) {
-    throw new WordPressMediaNotFoundError(
-      imageUrl,
-      "No media item matched upload path or source_url after search (slug is not used as primary key)."
-    );
+    throw new WordPressMediaNotFoundError(imageUrl);
   }
-  return found;
+  return found.media;
 }
 
-/** Same as {@link findWordPressMediaByUrl} but reuses an existing {@link WordPressClient}. */
+/**
+ * Resolve media for an image URL:
+ * 1. Slug candidates + URL corroboration (fast path).
+ * 2. Search + upload path / source_url / filename filter.
+ * 3. Loose source_url match in search results.
+ */
 export async function findWordPressMediaByUrlWithClient(
   imageUrl: string,
   wp: WordPressClient
-): Promise<WpMediaRestItem | null> {
+): Promise<FindMediaResult | null> {
   const url = imageUrl.trim();
   if (!url) return null;
 
   const normalizedOriginal = normalizeUrl(url);
   const uploadCandidates = uploadRelativePathCandidates(url);
   const rel = getUploadRelativePath(url);
-  const filenameStem =
-    rel ? getFilenameWithoutExtension(rel) : getFilenameWithoutExtension(url);
+  const filenameStem = rel ? getFilenameWithoutExtension(rel) : getFilenameWithoutExtension(url);
+  const slugCandidates = mediaSlugCandidatesFromUrl(url);
 
-  if (filenameStem.length < 2 && !uploadCandidates.length && !normalizedOriginal) {
-    return null;
-  }
+  const bySlug = await findMediaBySlugFirst(
+    wp,
+    url,
+    slugCandidates,
+    normalizedOriginal,
+    uploadCandidates,
+    filenameStem
+  );
+  if (bySlug) return bySlug;
 
-  const searchTerm = filenameStem.slice(0, 80) || (rel?.split("/").pop() ?? "").slice(0, 80);
-  if (!searchTerm) return null;
-
-  let items: WpMediaRestItem[] = [];
-  try {
-    items = await wp.getJson<WpMediaRestItem[]>(MEDIA_COLLECTION, {
-      search: searchTerm,
-      per_page: "100",
-    });
-  } catch {
-    return null;
-  }
-
-  if (!Array.isArray(items) || items.length === 0) return null;
-
-  const exact = pickBestMatch(items, normalizedOriginal, uploadCandidates, filenameStem);
-  if (exact) return exact;
-
-  // If search missed (common for hashed names), try slug= only when we have a single strong upload path candidate.
-  if (uploadCandidates.length === 1 && filenameStem.length >= 2) {
-    try {
-      const bySlug = await wp.getJson<WpMediaRestItem[]>(MEDIA_COLLECTION, {
-        slug: filenameStem.slice(0, 200),
-        per_page: "10",
-      });
-      if (Array.isArray(bySlug) && bySlug.length > 0) {
-        const fromSlug = pickBestMatch(bySlug, normalizedOriginal, uploadCandidates, filenameStem);
-        if (fromSlug) return fromSlug;
-      }
-    } catch {
-      // ignore
-    }
+  const searchTerm =
+    filenameStem.slice(0, 80) || slugCandidates[0]?.slice(0, 80) || (rel?.split("/").pop() ?? "");
+  if (searchTerm.length >= 2) {
+    const items = await searchMedia(wp, searchTerm);
+    const fromSearch = findInSearchResults(items, normalizedOriginal, uploadCandidates, filenameStem);
+    if (fromSearch) return fromSearch;
   }
 
   return null;
+}
+
+/** Fetch full media object by attachment id (fallback when URL matching fails but id is known). */
+export async function fetchWordPressMediaById(
+  wp: WordPressClient,
+  mediaId: number,
+  restPath = MEDIA_COLLECTION
+): Promise<WpMediaRestItem | null> {
+  if (mediaId <= 0) return null;
+  try {
+    const base = restPath.replace(/^\//, "").replace(/\/$/, "");
+    return await wp.getJson<WpMediaRestItem>(`${base}/${mediaId}`);
+  } catch {
+    return null;
+  }
 }
