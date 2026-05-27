@@ -4,7 +4,7 @@
  * Mapping flow (blog authors):
  * 1. `migrate-blog-authors.ts` — loads WP `story_author`, builds `entryPayload`, POST/PUT via CMA.
  * 2. `blog-author-config.ts` — field UIDs from env (`BLOG_AUTHOR_FIELD_*`).
- * 3. `blog-author-payload.ts` — value shapes (description, author_image group, seo_social group).
+ * 3. `blog-author-payload.ts` — value shapes (description, author_image group, seo group).
  * 4. `blog-author-seo.ts` — read Yoast/custom meta from WordPress.
  * 5. `contentstack-rte.ts` — WP description → HTML / plain / JSON RTE.
  * 6. `resolve-wp-image-asset.ts` — WP attachment id → Contentstack asset UID.
@@ -86,7 +86,7 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     twitterLink: process.env.BLOG_AUTHOR_FIELD_TWITTER_LINK ?? "twitter_link",
     linkedinLink: process.env.BLOG_AUTHOR_FIELD_LINKEDIN_LINK ?? "linkedin_link",
     facebookLink: process.env.BLOG_AUTHOR_FIELD_FACEBOOK_LINK ?? "facebook_link",
-    seoSocialGroup: process.env.BLOG_AUTHOR_FIELD_SEO_SOCIAL_GROUP ?? "seo_social",
+    seoSocialGroup: process.env.BLOG_AUTHOR_FIELD_SEO_SOCIAL_GROUP ?? "seo",
     seoTitleTag: process.env.BLOG_AUTHOR_FIELD_SEO_TITLE_TAG ?? "seo_title_tag",
     seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlInnerUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_URL ?? "url",
