@@ -13,8 +13,13 @@
 /** How the author image field is modeled on the content type. */
 export type AuthorImageLayout = "group" | "global" | "file";
 
-/** Contentstack file field value: `{ uid }` (single) vs `[{ uid }]` (multiple). */
-export type FileRefShape = "single" | "array";
+/**
+ * CMA file field value shape (see Contentstack CMA “Create entry with assets”):
+ * - `uid` — single file: `"blt..."` (default)
+ * - `uid_array` — multiple: `["blt...", "blt..."]`
+ * - `object` / `object_array` — `{ uid }` / `[{ uid }]` if your stack requires it
+ */
+export type FileRefShape = "uid" | "uid_array" | "object" | "object_array";
 
 export type BlogAuthorFieldUids = {
   cmsAssetName: string;
@@ -48,8 +53,11 @@ export type BlogAuthorFieldUids = {
 };
 
 export function loadBlogAuthorFileRefShape(): FileRefShape {
-  const raw = (process.env.BLOG_AUTHOR_FILE_REF_SHAPE ?? "single").toLowerCase();
-  return raw === "array" || raw === "multiple" ? "array" : "single";
+  const raw = (process.env.BLOG_AUTHOR_FILE_REF_SHAPE ?? "uid").toLowerCase();
+  if (raw === "uid_array" || raw === "array" || raw === "multiple") return "uid_array";
+  if (raw === "object_array") return "object_array";
+  if (raw === "object" || raw === "single") return "object";
+  return "uid";
 }
 
 function loadAuthorImageLayout(): AuthorImageLayout {

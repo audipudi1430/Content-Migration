@@ -68,6 +68,8 @@ type BuildAuthorPayloadCtx = {
   paths: PipelinePathsConfig;
   allTracking: TrackingRow[];
   trackRef: TrackingRow;
+  /** Existing entry (for --update): preserve other sub-fields in groups like author_image. */
+  existingEntry?: Record<string, unknown>;
 };
 
 async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<{
@@ -134,7 +136,13 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       paths: ctx.paths,
       allTracking: ctx.allTracking,
     });
-    setAuthorImageField(entryPayload, fields, assetUid);
+    const existingAuthorImage =
+      ctx.existingEntry?.[fields.authorImage] &&
+      typeof ctx.existingEntry[fields.authorImage] === "object" &&
+      !Array.isArray(ctx.existingEntry[fields.authorImage])
+        ? (ctx.existingEntry[fields.authorImage] as Record<string, unknown>)
+        : undefined;
+    setAuthorImageField(entryPayload, fields, assetUid, existingAuthorImage);
     trackRef.featured_media_wp_id = String(avatarId);
     trackRef.contentstack_asset_uid = assetUid;
     console.error(
@@ -260,6 +268,15 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
       const term = await wp.getJson<WpStoryAuthor>(rel);
 
+      let existingEntry: Record<string, unknown> | undefined;
+      if (existingUid) {
+        try {
+          existingEntry = (await cs.getEntry(contentTypeUid, existingUid, locale)) as Record<string, unknown>;
+        } catch {
+          existingEntry = undefined;
+        }
+      }
+
       const { payload: entryPayload, slug } = await buildBlogAuthorEntryPayload({
         term,
         fields,
@@ -273,6 +290,7 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         paths,
         allTracking,
         trackRef,
+        existingEntry,
       });
 
       let entryUid: string;

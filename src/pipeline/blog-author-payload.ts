@@ -7,47 +7,58 @@ import {
   wordpressDescriptionToJsonRteFieldValue,
 } from "./contentstack-rte.js";
 
-/** CMA file reference value for single- vs multi-select file fields. */
-export function contentstackFileRefValue(
-  assetUid: string,
-  shape: FileRefShape = "single"
-): { uid: string } | { uid: string }[] {
-  const ref = { uid: assetUid };
-  return shape === "array" ? [ref] : ref;
+/**
+ * CMA file reference for create/update entry.
+ * @see https://www.contentstack.com/docs/developers/apis/content-management-api
+ */
+export function contentstackFileRefValue(assetUid: string, shape: FileRefShape = "uid"): unknown {
+  switch (shape) {
+    case "uid_array":
+      return [assetUid];
+    case "object":
+      return { uid: assetUid };
+    case "object_array":
+      return [{ uid: assetUid }];
+    default:
+      return assetUid;
+  }
 }
 
 export function setFileAssetRef(
   entry: Record<string, unknown>,
   fieldUid: string,
   assetUid: string,
-  shape: FileRefShape = "single"
+  shape: FileRefShape = "uid"
 ): void {
   entry[fieldUid] = contentstackFileRefValue(assetUid, shape);
 }
 
-/** Nested file inside a Group or Global: `{ file: { uid } }` or `{ file: [{ uid }] }`. */
+/** Nested file inside a Group or Global: `{ file: "blt..." }` (CMA default). */
 export function setGroupFileAssetRef(
   entry: Record<string, unknown>,
   groupFieldUid: string,
   innerFileFieldUid: string,
   assetUid: string,
-  shape: FileRefShape = "single"
+  shape: FileRefShape = "uid",
+  mergeGroup?: Record<string, unknown>
 ): void {
   entry[groupFieldUid] = {
+    ...mergeGroup,
     [innerFileFieldUid]: contentstackFileRefValue(assetUid, shape),
   };
 }
 
 /**
  * Author Image field on the content type.
- * - `group` (default): `author_image: { file: { uid } }` (single file field)
+ * - `group` (default): `author_image: { file: "blt..." }` (CMA single file UID string)
  * - `global`: same nested shape under a Global field UID
  * - `file`: top-level file field
  */
 export function setAuthorImageField(
   entry: Record<string, unknown>,
   fields: BlogAuthorFieldUids,
-  assetUid: string
+  assetUid: string,
+  mergeGroup?: Record<string, unknown>
 ): void {
   const inner = fields.authorImageFileField;
   const shape = fields.fileRefShape;
@@ -55,7 +66,7 @@ export function setAuthorImageField(
     setFileAssetRef(entry, fields.authorImage, assetUid, shape);
     return;
   }
-  setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid, shape);
+  setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid, shape, mergeGroup);
 }
 
 /**
