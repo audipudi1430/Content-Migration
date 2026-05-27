@@ -1,4 +1,4 @@
-import type { BlogAuthorFieldUids } from "./blog-author-config.js";
+import type { BlogAuthorFieldUids, FileRefShape } from "./blog-author-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import {
   htmlToPlainWithBreaks,
@@ -7,28 +7,42 @@ import {
   wordpressDescriptionToJsonRteFieldValue,
 } from "./contentstack-rte.js";
 
-/** Contentstack single-file field: `[{ uid }]`. */
-export function setFileAssetRef(entry: Record<string, unknown>, fieldUid: string, assetUid: string): void {
-  entry[fieldUid] = [{ uid: assetUid }];
+/** CMA file reference value for single- vs multi-select file fields. */
+export function contentstackFileRefValue(
+  assetUid: string,
+  shape: FileRefShape = "single"
+): { uid: string } | { uid: string }[] {
+  const ref = { uid: assetUid };
+  return shape === "array" ? [ref] : ref;
 }
 
-/** Nested file inside a Group or Global: `{ file: [{ uid }] }`. */
+export function setFileAssetRef(
+  entry: Record<string, unknown>,
+  fieldUid: string,
+  assetUid: string,
+  shape: FileRefShape = "single"
+): void {
+  entry[fieldUid] = contentstackFileRefValue(assetUid, shape);
+}
+
+/** Nested file inside a Group or Global: `{ file: { uid } }` or `{ file: [{ uid }] }`. */
 export function setGroupFileAssetRef(
   entry: Record<string, unknown>,
   groupFieldUid: string,
   innerFileFieldUid: string,
-  assetUid: string
+  assetUid: string,
+  shape: FileRefShape = "single"
 ): void {
   entry[groupFieldUid] = {
-    [innerFileFieldUid]: [{ uid: assetUid }],
+    [innerFileFieldUid]: contentstackFileRefValue(assetUid, shape),
   };
 }
 
 /**
  * Author Image field on the content type.
- * - `group` (default): `author_image: { file: [{ uid }] }`
+ * - `group` (default): `author_image: { file: { uid } }` (single file field)
  * - `global`: same nested shape under a Global field UID
- * - `file`: top-level file field `author_image: [{ uid }]`
+ * - `file`: top-level file field
  */
 export function setAuthorImageField(
   entry: Record<string, unknown>,
@@ -36,11 +50,12 @@ export function setAuthorImageField(
   assetUid: string
 ): void {
   const inner = fields.authorImageFileField;
+  const shape = fields.fileRefShape;
   if (fields.authorImageLayout === "file") {
-    setFileAssetRef(entry, fields.authorImage, assetUid);
+    setFileAssetRef(entry, fields.authorImage, assetUid, shape);
     return;
   }
-  setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid);
+  setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid, shape);
 }
 
 /**

@@ -157,7 +157,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       paths: ctx.paths,
       allTracking: ctx.allTracking,
     });
-    setFileAssetRef(entryPayload, fields.metaImage, assetUid);
+    setFileAssetRef(entryPayload, fields.metaImage, assetUid, fields.fileRefShape);
   }
 
   return { payload: entryPayload, slug };

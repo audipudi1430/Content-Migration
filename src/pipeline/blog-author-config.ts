@@ -13,6 +13,9 @@
 /** How the author image field is modeled on the content type. */
 export type AuthorImageLayout = "group" | "global" | "file";
 
+/** Contentstack file field value: `{ uid }` (single) vs `[{ uid }]` (multiple). */
+export type FileRefShape = "single" | "array";
+
 export type BlogAuthorFieldUids = {
   cmsAssetName: string;
   /** Legacy top-level URL field (optional); page URL for SEO lives under `seoSocial`. */
@@ -41,7 +44,13 @@ export type BlogAuthorFieldUids = {
   metaDescriptionSource: "title" | "wp_seo";
   metaImage: string;
   pageOwner: string;
+  fileRefShape: FileRefShape;
 };
+
+export function loadBlogAuthorFileRefShape(): FileRefShape {
+  const raw = (process.env.BLOG_AUTHOR_FILE_REF_SHAPE ?? "single").toLowerCase();
+  return raw === "array" || raw === "multiple" ? "array" : "single";
+}
 
 function loadAuthorImageLayout(): AuthorImageLayout {
   const layout = (process.env.BLOG_AUTHOR_AUTHOR_IMAGE_LAYOUT ?? "").toLowerCase();
@@ -84,6 +93,7 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
         : "title",
     metaImage: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
     pageOwner: process.env.BLOG_AUTHOR_FIELD_PAGE_OWNER ?? "page_owner",
+    fileRefShape: loadBlogAuthorFileRefShape(),
   };
 }
 
