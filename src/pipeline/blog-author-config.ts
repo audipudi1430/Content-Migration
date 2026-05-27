@@ -44,9 +44,8 @@ export type BlogAuthorFieldUids = {
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
   seoCanonical: string;
+  /** Plain string inside SEO & Social group (required); mapped from WP `name`. */
   metaDescription: string;
-  /** `title` = entry title; `wp_seo` = Yoast/meta description from WordPress. */
-  metaDescriptionSource: "title" | "wp_seo";
   metaImage: string;
   pageOwner: string;
   fileRefShape: FileRefShape;
@@ -95,10 +94,6 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     seoPageUrlStatusDefault: process.env.BLOG_AUTHOR_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
     seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL ?? "canonical",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
-    metaDescriptionSource:
-      (process.env.BLOG_AUTHOR_META_DESCRIPTION_SOURCE ?? "title").toLowerCase() === "wp_seo"
-        ? "wp_seo"
-        : "title",
     metaImage: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
     pageOwner: process.env.BLOG_AUTHOR_FIELD_PAGE_OWNER ?? "page_owner",
     fileRefShape: loadBlogAuthorFileRefShape(),

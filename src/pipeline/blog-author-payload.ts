@@ -70,20 +70,20 @@ export function setAuthorImageField(
 }
 
 /**
- * SEO & Social group: title tag, page URL row(s), canonical, meta description.
+ * SEO & Social group (same pattern as Author Image): nested fields on one group object.
+ * `meta_description` is a required plain string — always set to the WP author `name`.
  */
 export function setSeoSocialGroup(
   entry: Record<string, unknown>,
   fields: BlogAuthorFieldUids,
   seo: WpAuthorSeoData,
-  opts: { metaDescription: string }
+  authorName: string,
+  mergeGroup?: Record<string, unknown>
 ): void {
-  const metaDesc =
-    fields.metaDescriptionSource === "wp_seo" && seo.metaDescription
-      ? seo.metaDescription
-      : opts.metaDescription;
+  const group: Record<string, unknown> = { ...mergeGroup };
 
-  const group: Record<string, unknown> = {};
+  // Required string inside SEO & Social (not top-level).
+  group[fields.metaDescription] = authorName;
 
   if (seo.seoTitleTag) {
     group[fields.seoTitleTag] = seo.seoTitleTag;
@@ -99,13 +99,8 @@ export function setSeoSocialGroup(
   if (seo.canonicalPath) {
     group[fields.seoCanonical] = seo.canonicalPath;
   }
-  if (metaDesc) {
-    group[fields.metaDescription] = metaDesc;
-  }
 
-  if (Object.keys(group).length > 0) {
-    entry[fields.seoSocialGroup] = group;
-  }
+  entry[fields.seoSocialGroup] = group;
 }
 
 export type BlogAuthorDescriptionFormat = "html" | "text" | "json_rte";

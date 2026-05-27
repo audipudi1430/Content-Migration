@@ -114,7 +114,13 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
   setScalar(entryPayload, fields.pageOwner, ctx.pageOwnerDefault);
 
-  setSeoSocialGroup(entryPayload, fields, seo, { metaDescription: name });
+  const existingSeoSocial =
+    ctx.existingEntry?.[fields.seoSocialGroup] &&
+    typeof ctx.existingEntry[fields.seoSocialGroup] === "object" &&
+    !Array.isArray(ctx.existingEntry[fields.seoSocialGroup])
+      ? (ctx.existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
+      : undefined;
+  setSeoSocialGroup(entryPayload, fields, seo, name, existingSeoSocial);
   console.error(
     `[blog-author] wp_id=${term.id} author_title<=meta.position="${authorTitle || "(empty)"}" author_name="${name}"`
   );
