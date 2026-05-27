@@ -90,9 +90,10 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     title: name,
   };
 
+  const authorTitle = pickString(meta.position);
   setScalar(entryPayload, fields.cmsAssetName, name);
   setScalar(entryPayload, fields.url, seo.pageUrlPath);
-  setScalar(entryPayload, fields.authorTitle, name);
+  setScalar(entryPayload, fields.authorTitle, authorTitle);
   setScalar(entryPayload, fields.authorName, name);
 
   const descFormat = loadBlogAuthorDescriptionFormat();
@@ -113,11 +114,13 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
   setScalar(entryPayload, fields.pageOwner, ctx.pageOwnerDefault);
 
-  setSeoSocialGroup(entryPayload, fields, seo, name);
+  setSeoSocialGroup(entryPayload, fields, seo, { metaDescription: name });
+  console.error(
+    `[blog-author] wp_id=${term.id} author_title<=meta.position="${authorTitle || "(empty)"}" author_name="${name}"`
+  );
   console.error(
     `[blog-author] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
-      `seoTitle=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} ` +
-      `metaDescSource=${fields.metaDescriptionSource} metaDesc=${fields.metaDescriptionSource === "title" ? name : seo.metaDescription}`
+      `seoTitle=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} metaDesc="${name}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`

@@ -76,12 +76,12 @@ export function setSeoSocialGroup(
   entry: Record<string, unknown>,
   fields: BlogAuthorFieldUids,
   seo: WpAuthorSeoData,
-  entryTitle: string
+  opts: { metaDescription: string }
 ): void {
   const metaDesc =
     fields.metaDescriptionSource === "wp_seo" && seo.metaDescription
       ? seo.metaDescription
-      : entryTitle;
+      : opts.metaDescription;
 
   const group: Record<string, unknown> = {};
 
