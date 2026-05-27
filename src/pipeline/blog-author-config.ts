@@ -1,7 +1,12 @@
 /**
  * Contentstack **field UID** strings (API keys on the content type), not the shape of stored values.
- * Scalar fields get strings; file fields are still keyed by UID but the entry payload must be
- * `[{ uid: "<asset_uid>" }]` (see `setAssetRef` in migrate-blog-authors).
+ *
+ * Mapping flow (blog authors):
+ * 1. `migrate-blog-authors.ts` — loads WP `story_author`, builds `entryPayload`, POST/PUT via CMA.
+ * 2. `blog-author-config.ts` — field UIDs from env (`BLOG_AUTHOR_FIELD_*`).
+ * 3. `blog-author-payload.ts` — value shapes: description (html/text/json_rte), file refs `[{ uid }]`, global author_image.
+ * 4. `contentstack-rte.ts` — WP description → HTML / plain / JSON RTE.
+ * 5. `resolve-wp-image-asset.ts` — WP attachment id → Contentstack asset UID for author_image / meta_image.
  */
 export type BlogAuthorFieldUids = {
   cmsAssetName: string;

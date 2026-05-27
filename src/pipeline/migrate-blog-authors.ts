@@ -15,7 +15,12 @@ import {
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
-import { setAuthorDescription, setAuthorImageField, setFileAssetRef } from "./blog-author-payload.js";
+import {
+  loadBlogAuthorDescriptionFormat,
+  setAuthorDescription,
+  setAuthorImageField,
+  setFileAssetRef,
+} from "./blog-author-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
@@ -104,7 +109,18 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   setScalar(entryPayload, fields.url, authorUrlPath);
   setScalar(entryPayload, fields.authorTitle, name);
   setScalar(entryPayload, fields.authorName, name);
-  setAuthorDescription(entryPayload, fields.description, term.description);
+  const descFormat = loadBlogAuthorDescriptionFormat();
+  const descLog = setAuthorDescription(entryPayload, fields.description, term.description, descFormat);
+  console.error(
+    `[blog-author] wp_id=${term.id} description field=${descLog.fieldUid} format=${descLog.format} ` +
+      `wp_len=${descLog.wpRawLength} set=${descLog.set} payloadType=${descLog.payloadType ?? "—"}`
+  );
+  if (descLog.wpPreview) {
+    console.error(`[blog-author] wp_id=${term.id} description WP preview: ${descLog.wpPreview}`);
+  }
+  if (descLog.payloadPreview) {
+    console.error(`[blog-author] wp_id=${term.id} description CS payload preview: ${descLog.payloadPreview}`);
+  }
   setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
   setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
   setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
@@ -128,9 +144,12 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     setAuthorImageField(entryPayload, fields, assetUid);
     trackRef.featured_media_wp_id = String(avatarId);
     trackRef.contentstack_asset_uid = assetUid;
-    if (source === "tracking") {
-      console.error(`[blog-author] wp_id=${term.id} avatar asset ${assetUid} from media_urls tracking`);
-    }
+    const imgPayload = entryPayload[fields.authorImage];
+    console.error(
+      `[blog-author] wp_id=${term.id} author_image field=${fields.authorImage} ` +
+        `isGlobal=${fields.authorImageIsGlobal} inner=${fields.authorImageGlobalInnerField} ` +
+        `assetUid=${assetUid} source=${source} payload=${JSON.stringify(imgPayload)}`
+    );
   }
 
   if (metaImageId) {

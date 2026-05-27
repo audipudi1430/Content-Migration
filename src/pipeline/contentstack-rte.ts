@@ -1,16 +1,18 @@
 /**
- * Build Contentstack JSON Rich Text Editor payload for Management API.
- * @see https://www.contentstack.com/docs/developers/apis/content-management-api/#json-rich-text-editor
+ * Build Contentstack Rich Text payloads for Management API.
+ * @see https://www.contentstack.com/docs/developers/json-rich-text-editor/schema-of-json-rich-text-editor
  */
+import { randomBytes } from "node:crypto";
 
-function stripUnsafeHtml(html: string): string {
+export function stripUnsafeHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .trim();
 }
 
-function htmlToPlainWithBreaks(html: string): string {
+/** Plain text from WP HTML (for Text / Multi-line fields). */
+export function htmlToPlainWithBreaks(html: string): string {
   return stripUnsafeHtml(html)
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/p>\s*/gi, "\n\n")
@@ -19,6 +21,27 @@ function htmlToPlainWithBreaks(html: string): string {
     .replace(/<[^>]+>/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+function rteNodeUid(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/** Contentstack JSON RTE blocks expect a `uid` on doc and block nodes. */
+export function assignJsonRteUids(node: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...node };
+  if (typeof out.type === "string" && !out.uid) {
+    out.uid = rteNodeUid();
+  }
+  if (Array.isArray(out.children)) {
+    out.children = out.children.map((child) => {
+      if (child && typeof child === "object" && "type" in child) {
+        return assignJsonRteUids(child as Record<string, unknown>);
+      }
+      return child;
+    });
+  }
+  return out;
 }
 
 function paragraphNodes(text: string): { type: string; attrs: Record<string, never>; children: { text: string }[] }[] {
@@ -32,7 +55,7 @@ function paragraphNodes(text: string): { type: string; attrs: Record<string, nev
 }
 
 /**
- * Convert WordPress author `description` (plain text or HTML) to JSON RTE `doc` root.
+ * JSON RTE `doc` root (without array wrapper). Use `wordpressDescriptionToJsonRteFieldValue` for CMA entry body.
  */
 export function wordpressDescriptionToJsonRte(htmlOrText: string): Record<string, unknown> | undefined {
   const raw = htmlOrText?.trim();
@@ -47,6 +70,16 @@ export function wordpressDescriptionToJsonRte(htmlOrText: string): Record<string
     attrs: {},
     children: paragraphNodes(plain),
   };
+}
+
+/**
+ * Value for a Contentstack **JSON Rich Text Editor** field on create/update.
+ * CMA stores this as an array of doc roots, each with block `uid`s.
+ */
+export function wordpressDescriptionToJsonRteFieldValue(htmlOrText: string): Record<string, unknown>[] | undefined {
+  const doc = wordpressDescriptionToJsonRte(htmlOrText);
+  if (!doc) return undefined;
+  return [assignJsonRteUids(doc)];
 }
 
 /** Pick description string from WP REST (string or `{ rendered }`). */
