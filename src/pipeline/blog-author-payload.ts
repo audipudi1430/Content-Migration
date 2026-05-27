@@ -1,4 +1,5 @@
 import type { BlogAuthorFieldUids } from "./blog-author-config.js";
+import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import {
   htmlToPlainWithBreaks,
   pickWordPressDescriptionField,
@@ -11,30 +12,73 @@ export function setFileAssetRef(entry: Record<string, unknown>, fieldUid: string
   entry[fieldUid] = [{ uid: assetUid }];
 }
 
-/**
- * Author image as a Global field: nested file reference inside the global module.
- * Example: `author_image: { image: [{ uid: "blt..." }] }`
- */
-export function setGlobalFieldFileAssetRef(
+/** Nested file inside a Group or Global: `{ file: [{ uid }] }`. */
+export function setGroupFileAssetRef(
   entry: Record<string, unknown>,
-  globalFieldUid: string,
+  groupFieldUid: string,
   innerFileFieldUid: string,
   assetUid: string
 ): void {
-  entry[globalFieldUid] = {
+  entry[groupFieldUid] = {
     [innerFileFieldUid]: [{ uid: assetUid }],
   };
 }
 
+/**
+ * Author Image field on the content type.
+ * - `group` (default): `author_image: { file: [{ uid }] }`
+ * - `global`: same nested shape under a Global field UID
+ * - `file`: top-level file field `author_image: [{ uid }]`
+ */
 export function setAuthorImageField(
   entry: Record<string, unknown>,
   fields: BlogAuthorFieldUids,
   assetUid: string
 ): void {
-  if (fields.authorImageIsGlobal) {
-    setGlobalFieldFileAssetRef(entry, fields.authorImage, fields.authorImageGlobalInnerField, assetUid);
-  } else {
+  const inner = fields.authorImageFileField;
+  if (fields.authorImageLayout === "file") {
     setFileAssetRef(entry, fields.authorImage, assetUid);
+    return;
+  }
+  setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid);
+}
+
+/**
+ * SEO & Social group: title tag, page URL row(s), canonical, meta description.
+ */
+export function setSeoSocialGroup(
+  entry: Record<string, unknown>,
+  fields: BlogAuthorFieldUids,
+  seo: WpAuthorSeoData,
+  entryTitle: string
+): void {
+  const metaDesc =
+    fields.metaDescriptionSource === "wp_seo" && seo.metaDescription
+      ? seo.metaDescription
+      : entryTitle;
+
+  const group: Record<string, unknown> = {};
+
+  if (seo.seoTitleTag) {
+    group[fields.seoTitleTag] = seo.seoTitleTag;
+  }
+  if (seo.pageUrlPath) {
+    group[fields.seoPageUrl] = [
+      {
+        [fields.seoPageUrlInnerUrl]: seo.pageUrlPath,
+        [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
+      },
+    ];
+  }
+  if (seo.canonicalPath) {
+    group[fields.seoCanonical] = seo.canonicalPath;
+  }
+  if (metaDesc) {
+    group[fields.metaDescription] = metaDesc;
+  }
+
+  if (Object.keys(group).length > 0) {
+    entry[fields.seoSocialGroup] = group;
   }
 }
 

@@ -4,52 +4,85 @@
  * Mapping flow (blog authors):
  * 1. `migrate-blog-authors.ts` — loads WP `story_author`, builds `entryPayload`, POST/PUT via CMA.
  * 2. `blog-author-config.ts` — field UIDs from env (`BLOG_AUTHOR_FIELD_*`).
- * 3. `blog-author-payload.ts` — value shapes: description (html/text/json_rte), file refs `[{ uid }]`, global author_image.
- * 4. `contentstack-rte.ts` — WP description → HTML / plain / JSON RTE.
- * 5. `resolve-wp-image-asset.ts` — WP attachment id → Contentstack asset UID for author_image / meta_image.
+ * 3. `blog-author-payload.ts` — value shapes (description, author_image group, seo_social group).
+ * 4. `blog-author-seo.ts` — read Yoast/custom meta from WordPress.
+ * 5. `contentstack-rte.ts` — WP description → HTML / plain / JSON RTE.
+ * 6. `resolve-wp-image-asset.ts` — WP attachment id → Contentstack asset UID.
  */
+
+/** How the author image field is modeled on the content type. */
+export type AuthorImageLayout = "group" | "global" | "file";
+
 export type BlogAuthorFieldUids = {
   cmsAssetName: string;
+  /** Legacy top-level URL field (optional); page URL for SEO lives under `seoSocial`. */
   url: string;
   authorTitle: string;
   authorName: string;
   description: string;
-  /**
-   * Top-level field UID for author image (often a Global field on the content type).
-   * When `authorImageIsGlobal` is true, asset is set on the nested key below.
-   */
   authorImage: string;
-  /** Nested field UID inside the Global field module that holds the file reference. */
-  authorImageGlobalInnerField: string;
-  /** If true, `authorImage` is sent as `{ [innerField]: [{ uid }] }` not a top-level file array. */
-  authorImageIsGlobal: boolean;
+  /** Nested file field UID inside Author Image group/global (`file` in your stack). */
+  authorImageFileField: string;
+  authorImageLayout: AuthorImageLayout;
   twitterLink: string;
   linkedinLink: string;
   facebookLink: string;
+  /** SEO & Social group field UID on the content type. */
+  seoSocialGroup: string;
   seoTitleTag: string;
-  /** Field UID for a single file/image reference (e.g. OG / meta image). */
-  metaImage: string;
+  /** Group/modular block UID holding URL + status rows. */
+  seoPageUrl: string;
+  seoPageUrlInnerUrl: string;
+  seoPageUrlInnerStatus: string;
+  seoPageUrlStatusDefault: string;
+  seoCanonical: string;
   metaDescription: string;
+  /** `title` = entry title; `wp_seo` = Yoast/meta description from WordPress. */
+  metaDescriptionSource: "title" | "wp_seo";
+  metaImage: string;
   pageOwner: string;
 };
 
+function loadAuthorImageLayout(): AuthorImageLayout {
+  const layout = (process.env.BLOG_AUTHOR_AUTHOR_IMAGE_LAYOUT ?? "").toLowerCase();
+  if (layout === "group" || layout === "global" || layout === "file") return layout;
+  if (process.env.BLOG_AUTHOR_AUTHOR_IMAGE_IS_GLOBAL === "1") return "global";
+  if (process.env.BLOG_AUTHOR_AUTHOR_IMAGE_IS_GLOBAL === "0") return "group";
+  return "group";
+}
+
 export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
+  const legacyGlobalInner = process.env.BLOG_AUTHOR_GLOBAL_AUTHOR_IMAGE_INNER_FIELD?.trim();
+  const fileField =
+    process.env.BLOG_AUTHOR_AUTHOR_IMAGE_FILE_FIELD?.trim() ||
+    legacyGlobalInner ||
+    "file";
+
   return {
     cmsAssetName: process.env.BLOG_AUTHOR_FIELD_CMS_ASSET_NAME ?? "cms_asset_name",
-    url: process.env.BLOG_AUTHOR_FIELD_URL ?? "url",
+    url: process.env.BLOG_AUTHOR_FIELD_URL ?? "",
     authorTitle: process.env.BLOG_AUTHOR_FIELD_AUTHOR_TITLE ?? "author_title",
     authorName: process.env.BLOG_AUTHOR_FIELD_AUTHOR_NAME ?? "author_name",
     description: process.env.BLOG_AUTHOR_FIELD_DESCRIPTION ?? "description",
     authorImage: process.env.BLOG_AUTHOR_FIELD_AUTHOR_IMAGE ?? "author_image",
-    authorImageGlobalInnerField:
-      process.env.BLOG_AUTHOR_GLOBAL_AUTHOR_IMAGE_INNER_FIELD?.trim() || "image",
-    authorImageIsGlobal: process.env.BLOG_AUTHOR_AUTHOR_IMAGE_IS_GLOBAL !== "0",
+    authorImageFileField: fileField,
+    authorImageLayout: loadAuthorImageLayout(),
     twitterLink: process.env.BLOG_AUTHOR_FIELD_TWITTER_LINK ?? "twitter_link",
     linkedinLink: process.env.BLOG_AUTHOR_FIELD_LINKEDIN_LINK ?? "linkedin_link",
     facebookLink: process.env.BLOG_AUTHOR_FIELD_FACEBOOK_LINK ?? "facebook_link",
+    seoSocialGroup: process.env.BLOG_AUTHOR_FIELD_SEO_SOCIAL_GROUP ?? "seo_social",
     seoTitleTag: process.env.BLOG_AUTHOR_FIELD_SEO_TITLE_TAG ?? "seo_title_tag",
-    metaImage: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
+    seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
+    seoPageUrlInnerUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_URL ?? "url",
+    seoPageUrlInnerStatus: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_STATUS ?? "status",
+    seoPageUrlStatusDefault: process.env.BLOG_AUTHOR_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
+    seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL ?? "canonical",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
+    metaDescriptionSource:
+      (process.env.BLOG_AUTHOR_META_DESCRIPTION_SOURCE ?? "title").toLowerCase() === "wp_seo"
+        ? "wp_seo"
+        : "title",
+    metaImage: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
     pageOwner: process.env.BLOG_AUTHOR_FIELD_PAGE_OWNER ?? "page_owner",
   };
 }
@@ -63,8 +96,8 @@ export function loadBlogAuthorContentTypeUid(): string {
 }
 
 /**
- * Canonical public path for an author page in Contentstack, aligned with WordPress-style URLs
- * such as `/news/author/{slug}`. Override prefix with `BLOG_AUTHOR_PAGE_URL_PREFIX` (default `/news/author`).
+ * Canonical public path for an author page when WordPress `link` is missing.
+ * Override prefix with `BLOG_AUTHOR_PAGE_URL_PREFIX` (default `/news/author`).
  */
 export function blogAuthorPageUrlPath(slug: string): string {
   const raw = (process.env.BLOG_AUTHOR_PAGE_URL_PREFIX ?? "/news/author").trim() || "/news/author";

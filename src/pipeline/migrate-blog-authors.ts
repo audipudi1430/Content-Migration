@@ -12,6 +12,7 @@ import {
   loadBlogAuthorFieldUids,
   type BlogAuthorFieldUids,
 } from "./blog-author-config.js";
+import { extractWpAuthorSeo, type WpAuthorSeoSource } from "./blog-author-seo.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -20,21 +21,15 @@ import {
   setAuthorDescription,
   setAuthorImageField,
   setFileAssetRef,
+  setSeoSocialGroup,
 } from "./blog-author-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
-type WpStoryAuthor = {
-  id: number;
-  name: string;
-  slug: string;
+type WpStoryAuthor = WpAuthorSeoSource & {
   description?: string | { rendered?: string };
-  link?: string;
-  meta?: Record<string, unknown>;
-  yoast_head_json?: {
-    title?: string;
-    description?: string;
+  yoast_head_json?: WpAuthorSeoSource["yoast_head_json"] & {
     og_image?: { url?: string }[];
   };
 };
@@ -54,23 +49,10 @@ function pickString(v: unknown): string {
 }
 
 function setScalar(entry: Record<string, unknown>, fieldUid: string, value: unknown): void {
+  if (!fieldUid) return;
   if (value === undefined || value === null) return;
   if (typeof value === "string" && value.trim() === "") return;
   entry[fieldUid] = value;
-}
-
-function seoTitle(term: WpStoryAuthor): string {
-  const m = term.meta ?? {};
-  const fromMeta = pickString(m.seo_title ?? m._yoast_wpseo_title);
-  if (fromMeta) return fromMeta;
-  return pickString(term.yoast_head_json?.title);
-}
-
-function seoDescription(term: WpStoryAuthor): string {
-  const m = term.meta ?? {};
-  const fromMeta = pickString(m.meta_description ?? m._yoast_wpseo_metadesc);
-  if (fromMeta) return fromMeta;
-  return pickString(term.yoast_head_json?.description);
 }
 
 type BuildAuthorPayloadCtx = {
@@ -95,7 +77,8 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   const { term, fields, trackRef } = ctx;
   const name = pickString(term.name) || `Author ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
-  const authorUrlPath = blogAuthorPageUrlPath(slug);
+  const fallbackUrlPath = blogAuthorPageUrlPath(slug);
+  const seo = extractWpAuthorSeo(term, fallbackUrlPath);
   const meta = term.meta ?? {};
 
   const avatarId = pickPositiveInt(meta.avatar_image_id);
@@ -106,9 +89,10 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   };
 
   setScalar(entryPayload, fields.cmsAssetName, name);
-  setScalar(entryPayload, fields.url, authorUrlPath);
+  setScalar(entryPayload, fields.url, seo.pageUrlPath);
   setScalar(entryPayload, fields.authorTitle, name);
   setScalar(entryPayload, fields.authorName, name);
+
   const descFormat = loadBlogAuthorDescriptionFormat();
   const descLog = setAuthorDescription(entryPayload, fields.description, term.description, descFormat);
   console.error(
@@ -121,12 +105,21 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   if (descLog.payloadPreview) {
     console.error(`[blog-author] wp_id=${term.id} description CS payload preview: ${descLog.payloadPreview}`);
   }
+
   setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
   setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
   setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
-  setScalar(entryPayload, fields.seoTitleTag, seoTitle(term));
-  setScalar(entryPayload, fields.metaDescription, seoDescription(term));
   setScalar(entryPayload, fields.pageOwner, ctx.pageOwnerDefault);
+
+  setSeoSocialGroup(entryPayload, fields, seo, name);
+  console.error(
+    `[blog-author] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
+      `seoTitle=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} ` +
+      `metaDescSource=${fields.metaDescriptionSource} metaDesc=${fields.metaDescriptionSource === "title" ? name : seo.metaDescription}`
+  );
+  console.error(
+    `[blog-author] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
+  );
 
   if (avatarId) {
     const { assetUid, source } = await resolveWpImageAssetUid({
@@ -144,11 +137,10 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     setAuthorImageField(entryPayload, fields, assetUid);
     trackRef.featured_media_wp_id = String(avatarId);
     trackRef.contentstack_asset_uid = assetUid;
-    const imgPayload = entryPayload[fields.authorImage];
     console.error(
-      `[blog-author] wp_id=${term.id} author_image field=${fields.authorImage} ` +
-        `isGlobal=${fields.authorImageIsGlobal} inner=${fields.authorImageGlobalInnerField} ` +
-        `assetUid=${assetUid} source=${source} payload=${JSON.stringify(imgPayload)}`
+      `[blog-author] wp_id=${term.id} author_image group=${fields.authorImage} layout=${fields.authorImageLayout} ` +
+        `fileField=${fields.authorImageFileField} assetUid=${assetUid} source=${source} ` +
+        `payload=${JSON.stringify(entryPayload[fields.authorImage])}`
     );
   }
 
