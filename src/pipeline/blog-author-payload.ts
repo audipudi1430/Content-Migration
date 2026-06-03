@@ -1,5 +1,4 @@
 import type { BlogAuthorFieldUids, FileRefShape } from "./blog-author-config.js";
-import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import {
   htmlToPlainWithBreaks,
   pickWordPressDescriptionField,
@@ -67,40 +66,6 @@ export function setAuthorImageField(
     return;
   }
   setGroupFileAssetRef(entry, fields.authorImage, inner, assetUid, shape, mergeGroup);
-}
-
-/**
- * SEO & Social group (same pattern as Author Image): nested fields on one group object.
- * `meta_description` is a required plain string — always set to the WP author `name`.
- */
-export function setSeoSocialGroup(
-  entry: Record<string, unknown>,
-  fields: BlogAuthorFieldUids,
-  seo: WpAuthorSeoData,
-  authorName: string,
-  mergeGroup?: Record<string, unknown>
-): void {
-  const group: Record<string, unknown> = { ...mergeGroup };
-
-  // Required string inside SEO & Social (not top-level).
-  group[fields.metaDescription] = authorName;
-
-  if (seo.seoTitleTag) {
-    group[fields.seoTitleTag] = seo.seoTitleTag;
-  }
-  if (seo.pageUrlPath) {
-    group[fields.seoPageUrl] = [
-      {
-        [fields.seoPageUrlInnerUrl]: seo.pageUrlPath,
-        [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
-      },
-    ];
-  }
-  if (seo.canonicalPath) {
-    group[fields.seoCanonical] = seo.canonicalPath;
-  }
-
-  entry[fields.seoSocialGroup] = group;
 }
 
 export type BlogAuthorDescriptionFormat = "html" | "text" | "json_rte";

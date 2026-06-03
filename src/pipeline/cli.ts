@@ -1,6 +1,7 @@
 import { initPipelineEnv } from "./args.js";
 import { runExtractUrls } from "./extract-urls.js";
 import { runMigrateBlogAuthorsFromTracking } from "./migrate-blog-authors.js";
+import { runMigrateBlogCategoriesFromTracking } from "./migrate-blog-categories.js";
 import { runMigrateContentFromTracking, runMigrateMediaFromTracking } from "./migrate-from-tracking.js";
 import { runPublishFromTracking } from "./publish.js";
 
@@ -16,6 +17,7 @@ async function main() {
   npm run pipeline:migrate-media -- --env=stack-a [--mode=all|single|ids|failed] [--limit=25] [--offset=0] [--ids=1,2]
   npm run pipeline:migrate-content -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2]
   npm run pipeline:migrate-blog-authors -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=365] [--update]
+  npm run pipeline:migrate-blog-categories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
 
 Env (see env/.env.migration-pipeline.example):
@@ -28,7 +30,8 @@ Env (see env/.env.migration-pipeline.example):
   MIGRATION_EXTRACT_SKIP_WP_ENRICH, MIGRATION_WP_EXTRACT_JSON_MAX_BYTES,
   CONTENTSTACK_PUBLISH_ENVIRONMENTS, CONTENTSTACK_PUBLISH_LOCALES, CS_FEATURED_IMAGE_FIELD_UID,
   CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE, CONTENTSTACK_ASSET_TARGET_URL_TEMPLATE,
-  story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*, BLOG_AUTHOR_FIELD_SEO_SOCIAL_GROUP, BLOG_AUTHOR_UPDATE, --update
+  story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*, BLOG_AUTHOR_UPDATE, --update
+  story_category→blog_category: CS_CONTENT_TYPE_BLOG_CATEGORY, BLOG_CATEGORY_FIELD_*, BLOG_CATEGORY_URL_LANGUAGE, BLOG_CATEGORY_UPDATE, --update
 `);
     process.exit(0);
   }
@@ -37,6 +40,7 @@ Env (see env/.env.migration-pipeline.example):
   else if (cmd === "migrate-media") await runMigrateMediaFromTracking(rest);
   else if (cmd === "migrate-content") await runMigrateContentFromTracking(rest);
   else if (cmd === "migrate-blog-authors") await runMigrateBlogAuthorsFromTracking(rest);
+  else if (cmd === "migrate-blog-categories") await runMigrateBlogCategoriesFromTracking(rest);
   else if (cmd === "publish") await runPublishFromTracking(rest);
   else throw new Error(`Unknown pipeline command: ${cmd}`);
 }

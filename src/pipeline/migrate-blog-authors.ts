@@ -21,8 +21,8 @@ import {
   setAuthorDescription,
   setAuthorImageField,
   setFileAssetRef,
-  setSeoSocialGroup,
 } from "./blog-author-payload.js";
+import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
