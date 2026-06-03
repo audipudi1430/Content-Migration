@@ -18,7 +18,6 @@ export type BlogCategoryFieldUids = SeoSocialFieldUids & {
   categoryNameAlias: string;
   /** Reference / modular field for child categories (optional). */
   blogSubCategories: string;
-  metaImage: string;
   /** `name` = category name; `wp_seo` = Yoast/meta description when present. */
   metaDescriptionSource: MetaDescriptionSource;
   fileRefShape: FileRefShape;
@@ -68,6 +67,11 @@ function loadThumbnailLayout(): "group" | "file" {
   return layout === "group" ? "group" : "file";
 }
 
+function loadSeoPageUrlShape(): "string" | "modular" {
+  const raw = (process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE ?? "string").toLowerCase();
+  return raw === "modular" ? "modular" : "string";
+}
+
 export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
   const thumbFile =
     process.env.BLOG_CATEGORY_THUMBNAIL_FILE_FIELD?.trim() || "file";
@@ -83,14 +87,19 @@ export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
     blogSubCategories:
       process.env.BLOG_CATEGORY_FIELD_BLOG_SUB_CATEGORIES ?? "blog_sub_category",
     seoSocialGroup: process.env.BLOG_CATEGORY_FIELD_SEO_SOCIAL_GROUP ?? "seo",
-    seoTitleTag: process.env.BLOG_CATEGORY_FIELD_SEO_TITLE_TAG ?? "seo_title_tag",
+    seoTitle:
+      process.env.BLOG_CATEGORY_FIELD_SEO_TITLE?.trim() ||
+      process.env.BLOG_CATEGORY_FIELD_SEO_TITLE_TAG?.trim() ||
+      "title",
     seoPageUrl: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL ?? "page_url",
+    seoPageUrlShape: loadSeoPageUrlShape(),
     seoPageUrlInnerUrl: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL_URL ?? "url",
     seoPageUrlInnerStatus: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL_STATUS ?? "status",
     seoPageUrlStatusDefault: process.env.BLOG_CATEGORY_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
-    seoCanonical: process.env.BLOG_CATEGORY_FIELD_SEO_CANONICAL ?? "canonical",
+    seoCanonical: process.env.BLOG_CATEGORY_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_CATEGORY_FIELD_META_DESCRIPTION ?? "meta_description",
-    metaImage: process.env.BLOG_CATEGORY_FIELD_META_IMAGE ?? "meta_image",
+    metaImageGroup: process.env.BLOG_CATEGORY_FIELD_META_IMAGE ?? "meta_image",
+    metaImageFileField: process.env.BLOG_CATEGORY_SEO_META_IMAGE_FILE_FIELD?.trim() || "file",
     metaDescriptionSource: loadBlogCategoryMetaDescriptionSource(),
     fileRefShape: loadBlogAuthorFileRefShape(),
   };

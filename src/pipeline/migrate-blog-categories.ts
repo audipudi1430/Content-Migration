@@ -19,7 +19,7 @@ import {
   type WpStoryCategory,
 } from "./blog-category-seo.js";
 import {
-  setCategorySeoSocialGroup,
+  setCategorySeoGlobal,
   setCategorySubCategoryRefs,
   setCategoryThumbnailField,
 } from "./blog-category-payload.js";
@@ -118,20 +118,28 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
     }
   }
 
-  setCategorySeoSocialGroup(
+  const existingMetaImageGroup =
+    existingSeoSocial?.[fields.metaImageGroup] &&
+    typeof existingSeoSocial[fields.metaImageGroup] === "object" &&
+    !Array.isArray(existingSeoSocial[fields.metaImageGroup])
+      ? (existingSeoSocial[fields.metaImageGroup] as Record<string, unknown>)
+      : undefined;
+
+  setCategorySeoGlobal(
     entryPayload,
     fields,
     seo,
     metaDescription,
     existingSeoSocial,
-    metaImageAssetUid
+    metaImageAssetUid,
+    existingMetaImageGroup
   );
 
   console.error(
-    `[blog-category] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
-      `seoTitleTag=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} ` +
+    `[blog-category] wp_id=${term.id} seo global=${fields.seoSocialGroup} ` +
+      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} ` +
       `metaDescSource=${fields.metaDescriptionSource} metaDesc="${metaDescription}" ` +
-      `metaImage=${metaImageAssetUid ?? "(none)"}`
+      `meta_image.file=${metaImageAssetUid ?? "(none)"}`
   );
   console.error(
     `[blog-category] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`

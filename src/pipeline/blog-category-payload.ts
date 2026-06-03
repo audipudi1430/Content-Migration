@@ -1,10 +1,6 @@
 import type { BlogCategoryFieldUids } from "./blog-category-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
-import {
-  contentstackFileRefValue,
-  setFileAssetRef,
-  setGroupFileAssetRef,
-} from "./blog-author-payload.js";
+import { setFileAssetRef, setGroupFileAssetRef } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
 
 export function setCategoryThumbnailField(
@@ -28,19 +24,24 @@ export function setCategoryThumbnailField(
   );
 }
 
-export function setCategorySeoSocialGroup(
+export function setCategorySeoGlobal(
   entry: Record<string, unknown>,
   fields: BlogCategoryFieldUids,
   seo: WpAuthorSeoData,
-  categoryName: string,
-  mergeGroup?: Record<string, unknown>,
-  metaImageAssetUid?: string
+  metaDescription: string,
+  mergeGlobal?: Record<string, unknown>,
+  metaImageAssetUid?: string,
+  mergeMetaImageGroup?: Record<string, unknown>
 ): void {
-  const extras: Record<string, unknown> = {};
-  if (metaImageAssetUid) {
-    extras[fields.metaImage] = contentstackFileRefValue(metaImageAssetUid, fields.fileRefShape);
-  }
-  setSeoSocialGroup(entry, fields, seo, categoryName, mergeGroup, extras);
+  setSeoSocialGroup(
+    entry,
+    fields,
+    seo,
+    metaDescription,
+    mergeGlobal,
+    metaImageAssetUid,
+    mergeMetaImageGroup
+  );
 }
 
 /** Contentstack reference entries: `[{ uid, _content_type_uid }]`. */

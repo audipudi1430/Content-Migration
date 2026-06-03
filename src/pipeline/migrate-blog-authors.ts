@@ -20,7 +20,6 @@ import {
   loadBlogAuthorDescriptionFormat,
   setAuthorDescription,
   setAuthorImageField,
-  setFileAssetRef,
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
@@ -121,13 +120,27 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       ? (ctx.existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
       : undefined;
   const metaDescription = resolveSeoMetaDescription(name, seo, "name");
-  setSeoSocialGroup(entryPayload, fields, seo, metaDescription, existingSeoSocial);
+  const existingMetaImageGroup =
+    existingSeoSocial?.[fields.metaImageGroup] &&
+    typeof existingSeoSocial[fields.metaImageGroup] === "object" &&
+    !Array.isArray(existingSeoSocial[fields.metaImageGroup])
+      ? (existingSeoSocial[fields.metaImageGroup] as Record<string, unknown>)
+      : undefined;
+  setSeoSocialGroup(
+    entryPayload,
+    fields,
+    seo,
+    metaDescription,
+    existingSeoSocial,
+    undefined,
+    existingMetaImageGroup
+  );
   console.error(
     `[blog-author] wp_id=${term.id} author_title<=meta.position="${authorTitle || "(empty)"}" author_name="${name}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
-      `seoTitleTag=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} metaDesc="${metaDescription}"`
+      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} metaDesc="${metaDescription}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
@@ -175,8 +188,21 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       paths: ctx.paths,
       allTracking: ctx.allTracking,
     });
-    setFileAssetRef(entryPayload, fields.metaImage, assetUid, fields.fileRefShape);
-    console.error(`[blog-author] wp_id=${term.id} meta_image asset=${assetUid} source=${source}`);
+    const seoGroup = entryPayload[fields.seoSocialGroup];
+    const seoObj =
+      seoGroup && typeof seoGroup === "object" && !Array.isArray(seoGroup)
+        ? (seoGroup as Record<string, unknown>)
+        : {};
+    setSeoSocialGroup(
+      entryPayload,
+      fields,
+      seo,
+      metaDescription,
+      seoObj,
+      assetUid,
+      existingMetaImageGroup
+    );
+    console.error(`[blog-author] wp_id=${term.id} seo.meta_image.file=${assetUid} source=${source}`);
   }
 
   return { payload: entryPayload, slug };

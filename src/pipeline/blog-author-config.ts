@@ -37,19 +37,25 @@ export type BlogAuthorFieldUids = {
   facebookLink: string;
   /** SEO & Social group field UID on the content type. */
   seoSocialGroup: string;
-  seoTitleTag: string;
-  /** Group/modular block UID holding URL + status rows. */
+  seoTitle: string;
   seoPageUrl: string;
+  seoPageUrlShape: "string" | "modular";
   seoPageUrlInnerUrl: string;
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
   seoCanonical: string;
   /** Plain string inside SEO & Social group (required); mapped from WP `name`. */
   metaDescription: string;
-  metaImage: string;
+  metaImageGroup: string;
+  metaImageFileField: string;
   pageOwner: string;
   fileRefShape: FileRefShape;
 };
+
+function loadAuthorSeoPageUrlShape(): "string" | "modular" {
+  const raw = (process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE ?? "modular").toLowerCase();
+  return raw === "string" ? "string" : "modular";
+}
 
 export function loadBlogAuthorFileRefShape(): FileRefShape {
   const raw = (process.env.BLOG_AUTHOR_FILE_REF_SHAPE ?? "uid").toLowerCase();
@@ -87,14 +93,19 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     linkedinLink: process.env.BLOG_AUTHOR_FIELD_LINKEDIN_LINK ?? "linkedin_link",
     facebookLink: process.env.BLOG_AUTHOR_FIELD_FACEBOOK_LINK ?? "facebook_link",
     seoSocialGroup: process.env.BLOG_AUTHOR_FIELD_SEO_SOCIAL_GROUP ?? "seo",
-    seoTitleTag: process.env.BLOG_AUTHOR_FIELD_SEO_TITLE_TAG ?? "seo_title_tag",
+    seoTitle:
+      process.env.BLOG_AUTHOR_FIELD_SEO_TITLE?.trim() ||
+      process.env.BLOG_AUTHOR_FIELD_SEO_TITLE_TAG?.trim() ||
+      "title",
     seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
+    seoPageUrlShape: loadAuthorSeoPageUrlShape(),
     seoPageUrlInnerUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_URL ?? "url",
     seoPageUrlInnerStatus: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_STATUS ?? "status",
     seoPageUrlStatusDefault: process.env.BLOG_AUTHOR_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
-    seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL ?? "canonical",
+    seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL?.trim() ?? "canonical",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
-    metaImage: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
+    metaImageGroup: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
+    metaImageFileField: process.env.BLOG_AUTHOR_SEO_META_IMAGE_FILE_FIELD?.trim() || "file",
     pageOwner: process.env.BLOG_AUTHOR_FIELD_PAGE_OWNER ?? "page_owner",
     fileRefShape: loadBlogAuthorFileRefShape(),
   };
