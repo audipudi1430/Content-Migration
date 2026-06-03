@@ -133,7 +133,8 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     metaDescription,
     existingSeoSocial,
     undefined,
-    existingMetaImageGroup
+    existingMetaImageGroup,
+    { wpId: term.id, entity: "blog-author" }
   );
   console.error(
     `[blog-author] wp_id=${term.id} author_title<=meta.position="${authorTitle || "(empty)"}" author_name="${name}"`
@@ -200,7 +201,8 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       metaDescription,
       seoObj,
       assetUid,
-      existingMetaImageGroup
+      existingMetaImageGroup,
+      { wpId: term.id, entity: "blog-author" }
     );
     console.error(`[blog-author] wp_id=${term.id} seo.meta_image.file=${assetUid} source=${source}`);
   }

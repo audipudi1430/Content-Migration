@@ -24,6 +24,31 @@ export type SeoSocialFieldUids = {
   fileRefShape: FileRefShape;
 };
 
+export type SeoLogContext = {
+  wpId?: number;
+  /** Log prefix entity, e.g. `blog-category`. */
+  entity?: string;
+};
+
+function seoLogPrefix(ctx?: SeoLogContext): string {
+  if (ctx?.wpId != null) return `[${ctx.entity ?? "seo"}] wp_id=${ctx.wpId}`;
+  return `[${ctx?.entity ?? "seo"}]`;
+}
+
+export function warnIfSeoPageUrlMissing(
+  seo: WpAuthorSeoData,
+  fields: SeoSocialFieldUids,
+  logContext?: SeoLogContext
+): boolean {
+  const path = seo.pageUrlPath?.trim();
+  if (path) return true;
+  console.error(
+    `${seoLogPrefix(logContext)} WARNING: page_url (${fields.seoPageUrl}) is undefined/empty; ` +
+      `omitting from seo global (no error thrown)`
+  );
+  return false;
+}
+
 export function setSeoMetaImageInGlobal(
   group: Record<string, unknown>,
   fields: Pick<SeoSocialFieldUids, "metaImageGroup" | "metaImageFileField" | "fileRefShape">,
@@ -46,7 +71,8 @@ export function setSeoSocialGroup(
   metaDescription: string,
   mergeGroup?: Record<string, unknown>,
   metaImageAssetUid?: string,
-  mergeMetaImageGroup?: Record<string, unknown>
+  mergeMetaImageGroup?: Record<string, unknown>,
+  logContext?: SeoLogContext
 ): void {
   const group: Record<string, unknown> = { ...mergeGroup };
 
@@ -56,16 +82,17 @@ export function setSeoSocialGroup(
     group[fields.seoTitle] = seo.seoTitleTag;
   }
 
-  if (seo.pageUrlPath) {
+  if (warnIfSeoPageUrlMissing(seo, fields, logContext)) {
+    const path = seo.pageUrlPath.trim();
     if (fields.seoPageUrlShape === "modular") {
       group[fields.seoPageUrl] = [
         {
-          [fields.seoPageUrlInnerUrl]: seo.pageUrlPath,
+          [fields.seoPageUrlInnerUrl]: path,
           [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
         },
       ];
     } else {
-      group[fields.seoPageUrl] = seo.pageUrlPath;
+      group[fields.seoPageUrl] = path;
     }
   }
 

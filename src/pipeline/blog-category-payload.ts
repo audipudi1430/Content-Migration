@@ -1,7 +1,7 @@
 import type { BlogCategoryFieldUids } from "./blog-category-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import { setFileAssetRef, setGroupFileAssetRef } from "./blog-author-payload.js";
-import { setSeoSocialGroup } from "./seo-social-payload.js";
+import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
 
 export function setCategoryThumbnailField(
   entry: Record<string, unknown>,
@@ -31,7 +31,8 @@ export function setCategorySeoGlobal(
   metaDescription: string,
   mergeGlobal?: Record<string, unknown>,
   metaImageAssetUid?: string,
-  mergeMetaImageGroup?: Record<string, unknown>
+  mergeMetaImageGroup?: Record<string, unknown>,
+  logContext?: SeoLogContext
 ): void {
   setSeoSocialGroup(
     entry,
@@ -40,7 +41,8 @@ export function setCategorySeoGlobal(
     metaDescription,
     mergeGlobal,
     metaImageAssetUid,
-    mergeMetaImageGroup
+    mergeMetaImageGroup,
+    logContext
   );
 }
 

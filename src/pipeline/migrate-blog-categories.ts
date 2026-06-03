@@ -132,7 +132,8 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
     metaDescription,
     existingSeoSocial,
     metaImageAssetUid,
-    existingMetaImageGroup
+    existingMetaImageGroup,
+    { wpId: term.id, entity: "blog-category" }
   );
 
   console.error(
