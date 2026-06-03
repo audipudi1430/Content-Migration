@@ -19,8 +19,18 @@ export type WpAuthorSeoSource = {
     description?: string;
     canonical?: string;
     og_url?: string;
+    og_image?: { url?: string }[];
   };
 };
+
+export type MetaDescriptionSource = "name" | "wp_seo";
+
+/** First OG image URL from Yoast (`yoast_head_json.og_image[0].url`). */
+export function pickYoastOgImageUrl(term: WpAuthorSeoSource): string {
+  const images = term.yoast_head_json?.og_image;
+  if (!Array.isArray(images) || images.length === 0) return "";
+  return pickString(images[0]?.url);
+}
 
 export type WpAuthorSeoData = {
   /** Browser / SEO title tag */
@@ -66,4 +76,18 @@ export function extractWpAuthorSeo(term: WpAuthorSeoSource, fallbackUrlPath: str
   const canonicalPath = yoastCanonicalPath || fromLink || fallbackUrlPath;
 
   return { seoTitleTag, metaDescription, pageUrlPath, canonicalPath };
+}
+
+/**
+ * Meta description for the SEO & Social group.
+ * - `name` — entry/category name (default for blog_author and blog_category)
+ * - `wp_seo` — Yoast / custom meta description when present
+ */
+export function resolveSeoMetaDescription(
+  entryName: string,
+  seo: WpAuthorSeoData,
+  source: MetaDescriptionSource = "name"
+): string {
+  if (source === "wp_seo" && seo.metaDescription) return seo.metaDescription;
+  return entryName;
 }

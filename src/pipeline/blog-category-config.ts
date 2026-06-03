@@ -1,5 +1,6 @@
 import type { FileRefShape } from "./blog-author-config.js";
 import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
+import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { SeoSocialFieldUids } from "./seo-social-payload.js";
 
 /**
@@ -18,8 +19,16 @@ export type BlogCategoryFieldUids = SeoSocialFieldUids & {
   /** Reference / modular field for child categories (optional). */
   blogSubCategories: string;
   metaImage: string;
+  /** `name` = category name; `wp_seo` = Yoast/meta description when present. */
+  metaDescriptionSource: MetaDescriptionSource;
   fileRefShape: FileRefShape;
 };
+
+export function loadBlogCategoryMetaDescriptionSource(): MetaDescriptionSource {
+  return (process.env.BLOG_CATEGORY_META_DESCRIPTION_SOURCE ?? "name").toLowerCase() === "wp_seo"
+    ? "wp_seo"
+    : "name";
+}
 
 export function loadBlogCategoryContentTypeUid(): string {
   return (
@@ -82,6 +91,7 @@ export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
     seoCanonical: process.env.BLOG_CATEGORY_FIELD_SEO_CANONICAL ?? "canonical",
     metaDescription: process.env.BLOG_CATEGORY_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImage: process.env.BLOG_CATEGORY_FIELD_META_IMAGE ?? "meta_image",
+    metaDescriptionSource: loadBlogCategoryMetaDescriptionSource(),
     fileRefShape: loadBlogAuthorFileRefShape(),
   };
 }

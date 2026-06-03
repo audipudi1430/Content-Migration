@@ -12,7 +12,7 @@ import {
   loadBlogAuthorFieldUids,
   type BlogAuthorFieldUids,
 } from "./blog-author-config.js";
-import { extractWpAuthorSeo, type WpAuthorSeoSource } from "./blog-author-seo.js";
+import { extractWpAuthorSeo, resolveSeoMetaDescription, type WpAuthorSeoSource } from "./blog-author-seo.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -120,13 +120,14 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     !Array.isArray(ctx.existingEntry[fields.seoSocialGroup])
       ? (ctx.existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
       : undefined;
-  setSeoSocialGroup(entryPayload, fields, seo, name, existingSeoSocial);
+  const metaDescription = resolveSeoMetaDescription(name, seo, "name");
+  setSeoSocialGroup(entryPayload, fields, seo, metaDescription, existingSeoSocial);
   console.error(
     `[blog-author] wp_id=${term.id} author_title<=meta.position="${authorTitle || "(empty)"}" author_name="${name}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
-      `seoTitle=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} metaDesc="${name}"`
+      `seoTitleTag=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} metaDesc="${metaDescription}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
@@ -162,7 +163,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   }
 
   if (metaImageId) {
-    const { assetUid } = await resolveWpImageAssetUid({
+    const { assetUid, source } = await resolveWpImageAssetUid({
       attachmentId: metaImageId,
       wp: ctx.wp,
       cs: ctx.cs,
@@ -170,11 +171,12 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
       mediaSheetPath: ctx.mediaSheetPath,
       folderUid: ctx.folderUid,
       locale: ctx.locale,
-      purpose: `Author ${term.id} meta image`,
+      purpose: `Author ${term.id} meta image (meta.downloadable_image_id)`,
       paths: ctx.paths,
       allTracking: ctx.allTracking,
     });
     setFileAssetRef(entryPayload, fields.metaImage, assetUid, fields.fileRefShape);
+    console.error(`[blog-author] wp_id=${term.id} meta_image asset=${assetUid} source=${source}`);
   }
 
   return { payload: entryPayload, slug };

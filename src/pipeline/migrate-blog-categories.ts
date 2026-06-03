@@ -12,6 +12,7 @@ import {
   loadBlogCategoryFieldUids,
   type BlogCategoryFieldUids,
 } from "./blog-category-config.js";
+import { resolveSeoMetaDescription } from "./blog-author-seo.js";
 import {
   extractWpCategorySeo,
   pickYoastOgImageUrl,
@@ -65,6 +66,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   const slug = pickString(term.slug) || String(term.id);
   const pageUrl = blogCategoryPageUrlPath(slug);
   const seo = extractWpCategorySeo(term, slug);
+  const metaDescription = resolveSeoMetaDescription(name, seo, fields.metaDescriptionSource);
   const ogImageUrl = pickYoastOgImageUrl(term);
 
   const entryPayload: Record<string, unknown> = {
@@ -76,7 +78,15 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   setScalar(entryPayload, fields.blogCategoryName, name);
   setScalar(entryPayload, fields.categoryNameAlias, name);
 
+  const existingSeoSocial =
+    ctx.existingEntry?.[fields.seoSocialGroup] &&
+    typeof ctx.existingEntry[fields.seoSocialGroup] === "object" &&
+    !Array.isArray(ctx.existingEntry[fields.seoSocialGroup])
+      ? (ctx.existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
+      : undefined;
+
   let metaImageAssetUid: string | undefined;
+
   if (ogImageUrl) {
     const resolved = await resolveWpImageAssetFromUrl({
       imageUrl: ogImageUrl,
@@ -86,7 +96,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
       mediaSheetPath: ctx.mediaSheetPath,
       folderUid: ctx.folderUid,
       locale: ctx.locale,
-      purpose: `Category ${term.id} og_image`,
+      purpose: `Category ${term.id} meta_image/thumbnail (yoast og_image)`,
       paths: ctx.paths,
       allTracking: ctx.allTracking,
     });
@@ -101,31 +111,27 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
           : undefined;
       setCategoryThumbnailField(entryPayload, fields, resolved.assetUid, existingThumb);
       console.error(
-        `[blog-category] wp_id=${term.id} thumbnail/meta from og_image asset=${resolved.assetUid} source=${resolved.source}`
+        `[blog-category] wp_id=${term.id} og_image asset=${resolved.assetUid} source=${resolved.source}`
       );
     } else {
       console.error(`[blog-category] wp_id=${term.id} og_image not resolved: ${ogImageUrl}`);
     }
   }
 
-  const existingSeoSocial =
-    ctx.existingEntry?.[fields.seoSocialGroup] &&
-    typeof ctx.existingEntry[fields.seoSocialGroup] === "object" &&
-    !Array.isArray(ctx.existingEntry[fields.seoSocialGroup])
-      ? (ctx.existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
-      : undefined;
-
   setCategorySeoSocialGroup(
     entryPayload,
     fields,
     seo,
-    name,
+    metaDescription,
     existingSeoSocial,
     metaImageAssetUid
   );
 
   console.error(
-    `[blog-category] wp_id=${term.id} url=${pageUrl} seoTitle=${seo.seoTitleTag} metaDesc="${name}"`
+    `[blog-category] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
+      `seoTitleTag=${seo.seoTitleTag} pageUrl=${seo.pageUrlPath} canonical=${seo.canonicalPath} ` +
+      `metaDescSource=${fields.metaDescriptionSource} metaDesc="${metaDescription}" ` +
+      `metaImage=${metaImageAssetUid ?? "(none)"}`
   );
   console.error(
     `[blog-category] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
