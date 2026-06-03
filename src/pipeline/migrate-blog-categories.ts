@@ -26,6 +26,7 @@ import {
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
+import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
@@ -333,28 +334,34 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         existingEntry,
       });
 
-      let entryUid: string;
-
-      if (updateExisting && existingUid) {
-        const updated = await cs.updateEntry(
-          contentTypeUid,
-          existingUid,
-          entryPayload as { title: string },
-          locale
-        );
-        entryUid = updated.uid ?? existingUid;
-        trackRef.migration_message = "Updated from WordPress (--update)";
-        console.error(`[blog-category] wp_id=${tRow.wp_id} UPDATED entry ${entryUid}`);
-      } else if (updateExisting && !existingUid) {
+      if (updateExisting && !existingUid) {
         throw new Error(
           "No Contentstack entry UID in map or tracking; run migrate without --update first"
         );
-      } else {
-        const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
-        entryUid = entry.uid;
-        trackRef.migration_message = "";
-        console.error(`[blog-category] wp_id=${tRow.wp_id} CREATED entry ${entryUid}`);
       }
+
+      const logCtx = { wpId: tRow.wp_id, entity: "blog-category" };
+      const { uid: entryUid, warning: pageUrlWarning } = await upsertContentstackEntryWithSeoFallback({
+        cs,
+        contentTypeUid,
+        payload: entryPayload as { title: string },
+        locale,
+        existingUid: updateExisting ? existingUid : undefined,
+        seoFields: fields,
+        logContext: logCtx,
+      });
+
+      if (pageUrlWarning) {
+        trackRef.migration_message = pageUrlWarning;
+        console.error(`[blog-category] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
+      } else if (updateExisting) {
+        trackRef.migration_message = "Updated from WordPress (--update)";
+      } else {
+        trackRef.migration_message = "";
+      }
+      console.error(
+        `[blog-category] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
+      );
 
       map.set({
         wpId: tRow.wp_id,

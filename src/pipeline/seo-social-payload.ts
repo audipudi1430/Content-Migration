@@ -10,8 +10,8 @@ export type SeoSocialFieldUids = {
   seoTitle: string;
   /** Page URL field (e.g. `page_url`). */
   seoPageUrl: string;
-  /** `string` = path text; `modular` = `[{ url, status }]`. */
-  seoPageUrlShape: "string" | "modular";
+  /** `group` = `{ url, status }`; `modular` = `[{ url, status }]`; `string` = path text. */
+  seoPageUrlShape: "string" | "modular" | "group";
   seoPageUrlInnerUrl: string;
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
@@ -83,17 +83,7 @@ export function setSeoSocialGroup(
   }
 
   if (warnIfSeoPageUrlMissing(seo, fields, logContext)) {
-    const path = seo.pageUrlPath.trim();
-    if (fields.seoPageUrlShape === "modular") {
-      group[fields.seoPageUrl] = [
-        {
-          [fields.seoPageUrlInnerUrl]: path,
-          [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
-        },
-      ];
-    } else {
-      group[fields.seoPageUrl] = path;
-    }
+    group[fields.seoPageUrl] = buildSeoPageUrlValue(fields, seo.pageUrlPath.trim());
   }
 
   if (fields.seoCanonical && seo.canonicalPath) {
@@ -105,4 +95,42 @@ export function setSeoSocialGroup(
   }
 
   entry[fields.seoSocialGroup] = group;
+}
+
+/** CMA value for `seo.page_url` (group object vs modular block vs plain string). */
+export function buildSeoPageUrlValue(fields: SeoSocialFieldUids, path: string): unknown {
+  if (fields.seoPageUrlShape === "modular") {
+    return [
+      {
+        [fields.seoPageUrlInnerUrl]: path,
+        [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
+      },
+    ];
+  }
+  if (fields.seoPageUrlShape === "group") {
+    return {
+      [fields.seoPageUrlInnerUrl]: path,
+      [fields.seoPageUrlInnerStatus]: fields.seoPageUrlStatusDefault,
+    };
+  }
+  return path;
+}
+
+export function isSeoPageUrlValidationError(message: string): boolean {
+  return /seo\.page_url|page_url.*not a valid object/i.test(message);
+}
+
+/** Remove `page_url` from the seo global so a retry can succeed. */
+export function omitSeoPageUrlFromEntry(
+  payload: Record<string, unknown>,
+  fields: Pick<SeoSocialFieldUids, "seoSocialGroup" | "seoPageUrl">
+): Record<string, unknown> {
+  const copy = { ...payload };
+  const seo = copy[fields.seoSocialGroup];
+  if (seo && typeof seo === "object" && !Array.isArray(seo)) {
+    const g = { ...(seo as Record<string, unknown>) };
+    delete g[fields.seoPageUrl];
+    copy[fields.seoSocialGroup] = g;
+  }
+  return copy;
 }

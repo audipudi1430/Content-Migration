@@ -67,9 +67,11 @@ function loadThumbnailLayout(): "group" | "file" {
   return layout === "group" ? "group" : "file";
 }
 
-function loadSeoPageUrlShape(): "string" | "modular" {
-  const raw = (process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE ?? "string").toLowerCase();
-  return raw === "modular" ? "modular" : "string";
+function loadSeoPageUrlShape(): "string" | "modular" | "group" {
+  const raw = (process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE ?? "group").toLowerCase();
+  if (raw === "modular") return "modular";
+  if (raw === "string") return "string";
+  return "group";
 }
 
 export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {

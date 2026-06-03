@@ -39,7 +39,7 @@ export type BlogAuthorFieldUids = {
   seoSocialGroup: string;
   seoTitle: string;
   seoPageUrl: string;
-  seoPageUrlShape: "string" | "modular";
+  seoPageUrlShape: "string" | "modular" | "group";
   seoPageUrlInnerUrl: string;
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
@@ -52,9 +52,11 @@ export type BlogAuthorFieldUids = {
   fileRefShape: FileRefShape;
 };
 
-function loadAuthorSeoPageUrlShape(): "string" | "modular" {
+function loadAuthorSeoPageUrlShape(): "string" | "modular" | "group" {
   const raw = (process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE ?? "modular").toLowerCase();
-  return raw === "string" ? "string" : "modular";
+  if (raw === "group") return "group";
+  if (raw === "string") return "string";
+  return "modular";
 }
 
 export function loadBlogAuthorFileRefShape(): FileRefShape {
