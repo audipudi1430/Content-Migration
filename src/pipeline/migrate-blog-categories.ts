@@ -112,7 +112,10 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
           : undefined;
       setCategoryThumbnailField(entryPayload, fields, resolved.assetUid, existingThumb);
       console.error(
-        `[blog-category] wp_id=${term.id} og_image asset=${resolved.assetUid} source=${resolved.source}`
+        `[blog-category] wp_id=${term.id} category_thumbnail group=${fields.categoryThumbnail} ` +
+          `layout=${fields.categoryThumbnailLayout} fileField=${fields.categoryThumbnailFileField} ` +
+          `assetUid=${resolved.assetUid} source=${resolved.source} ` +
+          `payload=${JSON.stringify(entryPayload[fields.categoryThumbnail])}`
       );
     } else {
       console.error(`[blog-category] wp_id=${term.id} og_image not resolved: ${ogImageUrl}`);

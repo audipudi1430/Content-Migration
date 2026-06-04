@@ -47,6 +47,11 @@ export function setGroupFileAssetRef(
   };
 }
 
+export type ImageGroupFieldUids = Pick<
+  BlogAuthorFieldUids,
+  "authorImage" | "authorImageFileField" | "authorImageLayout" | "fileRefShape"
+>;
+
 /**
  * Author Image field on the content type.
  * - `group` (default): `author_image: { file: "blt..." }` (CMA single file UID string)
@@ -55,7 +60,7 @@ export function setGroupFileAssetRef(
  */
 export function setAuthorImageField(
   entry: Record<string, unknown>,
-  fields: BlogAuthorFieldUids,
+  fields: ImageGroupFieldUids,
   assetUid: string,
   mergeGroup?: Record<string, unknown>
 ): void {

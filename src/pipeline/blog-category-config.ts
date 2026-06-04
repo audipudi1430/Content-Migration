@@ -13,8 +13,9 @@ export type BlogCategoryFieldUids = SeoSocialFieldUids & {
   url: string;
   blogCategoryName: string;
   categoryThumbnail: string;
+  /** Nested file field UID inside category thumbnail group/global (`file` in your stack). */
   categoryThumbnailFileField: string;
-  categoryThumbnailLayout: "group" | "file";
+  categoryThumbnailLayout: CategoryThumbnailLayout;
   categoryNameAlias: string;
   /** Reference / modular field for child categories (optional). */
   blogSubCategories: string;
@@ -62,9 +63,15 @@ export function blogCategoryPageUrlPath(slug: string, language?: string): string
     .replace(/^(?!\/)/, "/");
 }
 
-function loadThumbnailLayout(): "group" | "file" {
-  const layout = (process.env.BLOG_CATEGORY_THUMBNAIL_LAYOUT ?? "file").toLowerCase();
-  return layout === "group" ? "group" : "file";
+/** How category_thumbnail is modeled on the content type (same options as author_image). */
+export type CategoryThumbnailLayout = "group" | "global" | "file";
+
+function loadThumbnailLayout(): CategoryThumbnailLayout {
+  const layout = (process.env.BLOG_CATEGORY_THUMBNAIL_LAYOUT ?? "").toLowerCase();
+  if (layout === "group" || layout === "global" || layout === "file") return layout;
+  if (process.env.BLOG_CATEGORY_THUMBNAIL_IS_GLOBAL === "1") return "global";
+  if (process.env.BLOG_CATEGORY_THUMBNAIL_IS_GLOBAL === "0") return "group";
+  return "group";
 }
 
 function loadSeoPageUrlShape(): "string" | "modular" | "group" {
