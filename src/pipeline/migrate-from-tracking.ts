@@ -27,6 +27,7 @@ export function wpEntityKindFromRestPath(restPath: string): WpEntityKind {
   if (seg === "posts") return "post";
   if (seg === "pages") return "page";
   if (seg === "story_author") return "story_author";
+  if (seg === "story" || seg === "stories") return "story";
   if (seg === "categories" || seg === "story_category") return "category";
   return "custom";
 }

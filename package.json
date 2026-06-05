@@ -13,6 +13,7 @@
     "pipeline:migrate-content": "tsx src/pipeline/cli.ts migrate-content",
     "pipeline:migrate-blog-authors": "tsx src/pipeline/cli.ts migrate-blog-authors",
     "pipeline:migrate-blog-categories": "tsx src/pipeline/cli.ts migrate-blog-categories",
+    "pipeline:migrate-blog-stories": "tsx src/pipeline/cli.ts migrate-blog-stories",
     "pipeline:publish": "tsx src/pipeline/cli.ts publish",
     "typecheck": "tsc --noEmit"
   },
