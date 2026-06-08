@@ -4,6 +4,7 @@ import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
 import { ContentstackManagementClient } from "../contentstack/client.js";
 import { loadConfig } from "../config.js";
 import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
+import { ensureAssetFolderUid } from "../media/migrate-media-core.js";
 import { closeMongo } from "../mongo/tracking-repository.js";
 import { initPipelineEnv, parseSelection, parseUpdateFlag, type SelectionMode } from "./args.js";
 import {
@@ -19,12 +20,17 @@ import {
   loadBlogWpTaxonomyAuthor,
   loadBlogWpTaxonomyCategory,
 } from "./blog-config.js";
+import { loadBlogBodyBlockUids, loadBlogBodySource } from "./blog-body-config.js";
+import { buildBodyContentFromWpStory } from "./blog-body-content.js";
 import {
   buildBlogEntryPayload,
   pickMetaString,
   pickRenderedTitle,
   pickWpTermIds,
+  setScalar,
 } from "./blog-payload.js";
+import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
+import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -93,8 +99,12 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
   const wpTaxonomyCategory = loadBlogWpTaxonomyCategory();
   const wpTaxonomyAuthor = loadBlogWpTaxonomyAuthor();
 
+  const bodyUids = loadBlogBodyBlockUids();
+  const bodySource = loadBlogBodySource();
+
   const cfg = loadConfig();
   const mongoCfg = loadMongoConfig();
+  const mediaSheetPath = process.env.MEDIA_SHEET_PATH ?? "wp-media-mapping.xlsx";
 
   const auth =
     cfg.wp.user && cfg.wp.applicationPassword
@@ -108,6 +118,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
   });
   const map = await MappingStore.load(cfg.mappingFile);
   const locale = process.env.CONTENTSTACK_LOCALE;
+  const folderUid = await ensureAssetFolderUid(map, cs);
 
   const restSeg = paths.wpRestPath.replace(/\/$/, "").split("/").pop() ?? "";
   if (restSeg !== "story" && restSeg !== "stories") {
@@ -228,9 +239,62 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         metaKeys,
       });
 
+      const bodyResult = await buildBodyContentFromWpStory(
+        story,
+        bodyUids,
+        async ({ attachmentId, imageUrl, purpose }) => {
+          try {
+            if (attachmentId) {
+              const resolved = await resolveWpImageAssetUid({
+                attachmentId,
+                wp,
+                cs,
+                map,
+                mediaSheetPath,
+                folderUid,
+                locale,
+                purpose: `Story ${tRow.wp_id} ${purpose}`,
+                paths,
+                allTracking,
+              });
+              return resolved.assetUid;
+            }
+            if (imageUrl) {
+              const resolved = await resolveWpImageAssetFromUrl({
+                imageUrl,
+                wp,
+                cs,
+                map,
+                mediaSheetPath,
+                folderUid,
+                locale,
+                purpose: `Story ${tRow.wp_id} ${purpose}`,
+                paths,
+                allTracking,
+              });
+              return resolved?.assetUid;
+            }
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`[blog] wp_id=${tRow.wp_id} body image FAIL: ${msg.slice(0, 200)}`);
+          }
+          return undefined;
+        },
+        bodySource,
+        (msg) => console.error(`[blog] wp_id=${tRow.wp_id} body: ${msg}`)
+      );
+
+      if (bodyResult.blocks.length > 0) {
+        setScalar(entryPayload, bodyUids.fieldUid, bodyResult.blocks);
+      }
+
       console.error(
         `[blog] wp_id=${tRow.wp_id} title="${cmsTitle}" url=${pageUrl} ` +
           `category=${categoryRefUid ?? "(none)"} author=${authorRefUid ?? "(none)"} ` +
+          `body=${bodyResult.stats.source} blocks=${bodyResult.blocks.length} ` +
+          `(text=${bodyResult.stats.text} image=${bodyResult.stats.image} ` +
+          `itw=${bodyResult.stats.imageTextWrap} quote=${bodyResult.stats.pullQuote} ` +
+          `video=${bodyResult.stats.video} skipped=${bodyResult.stats.skipped}) ` +
           `sub_header="${pickMetaString(
             story.meta && typeof story.meta === "object" && !Array.isArray(story.meta)
               ? (story.meta as Record<string, unknown>)
