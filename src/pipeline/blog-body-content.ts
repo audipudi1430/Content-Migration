@@ -2,12 +2,18 @@ import type { BlogBodyBlockUids, BlogBodySource } from "./blog-body-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
 import { htmlToPlainWithBreaks, stripUnsafeHtml } from "./contentstack-rte.js";
 
+/** WordPress block — supports Gutenberg REST (`name`/`attributes`) and classic (`blockName`/`attrs`). */
 export type WpContentBlock = {
   blockName?: string | null;
+  /** REST API block type, e.g. `core/paragraph`. */
+  name?: string | null;
   attrs?: Record<string, unknown>;
+  /** REST API block attributes (often includes `content`, `level`). */
+  attributes?: Record<string, unknown>;
   innerBlocks?: WpContentBlock[];
   innerHTML?: string;
   innerContent?: unknown[];
+  clientId?: string;
 };
 
 export type BodyImageResolver = (opts: {
@@ -111,16 +117,48 @@ export function contentAttributeForLog(content: unknown, maxFieldLen = 1200): un
   return out;
 }
 
+function previewBlockContent(value: unknown, max = 120): string | undefined {
+  const s = pickString(value);
+  if (!s) return undefined;
+  return s.length <= max ? s : `${s.slice(0, max)}…`;
+}
+
+/** Normalize REST `name`/`attributes` into `blockName`/`attrs` (+ synthetic innerHTML when needed). */
+export function normalizeWpBlock(raw: WpContentBlock): WpContentBlock {
+  const blockName = pickString(raw.blockName) || pickString(raw.name) || null;
+  const attrs = { ...(raw.attributes ?? {}), ...(raw.attrs ?? {}) };
+  const innerBlocks = (raw.innerBlocks ?? []).map(normalizeWpBlock);
+
+  let innerHTML = raw.innerHTML?.trim() ?? "";
+  const attrContent = pickString(attrs.content);
+  if (!innerHTML && attrContent) {
+    if (blockName === "core/paragraph") {
+      innerHTML = /<[a-z][\s\S]*>/i.test(attrContent) ? attrContent : `<p>${attrContent}</p>`;
+    } else if (blockName === "core/heading") {
+      const level = pickPositiveInt(attrs.level) ?? 2;
+      innerHTML = `<h${level}>${attrContent}</h${level}>`;
+    } else {
+      innerHTML = attrContent;
+    }
+  }
+
+  return { blockName, attrs, innerBlocks, innerHTML: innerHTML || undefined };
+}
+
 /** Compact per-block summary for mapping discovery. */
 export function summarizeWpBlocksForLog(blocks: WpContentBlock[]): unknown[] {
-  const walk = (list: WpContentBlock[], depth = 0): unknown[] =>
-    list.map((b) => ({
-      blockName: b.blockName ?? null,
-      attrs: b.attrs ?? {},
-      innerHTML_len: (b.innerHTML ?? "").length,
-      innerBlocks_count: b.innerBlocks?.length ?? 0,
-      innerBlocks: b.innerBlocks?.length ? walk(b.innerBlocks, depth + 1) : undefined,
-    }));
+  const walk = (list: WpContentBlock[]): unknown[] =>
+    list.map((b) => {
+      const attrs = { ...(b.attributes ?? {}), ...(b.attrs ?? {}) };
+      return {
+        name: b.name ?? b.blockName ?? null,
+        attributes_content: previewBlockContent(attrs.content),
+        attributes_level: attrs.level,
+        innerHTML_len: (b.innerHTML ?? "").length,
+        innerBlocks_count: b.innerBlocks?.length ?? 0,
+        innerBlocks: b.innerBlocks?.length ? walk(b.innerBlocks) : undefined,
+      };
+    });
   return walk(blocks);
 }
 
@@ -189,23 +227,27 @@ export function logWpStoryContentForMapping(wpId: number, story: Record<string, 
   );
 }
 
+function normalizeWpBlockList(blocks: unknown[]): WpContentBlock[] {
+  return blocks.map((b) => normalizeWpBlock(b as WpContentBlock));
+}
+
 /** Collect WP blocks from common REST shapes (`blocks`, `content.blocks`, Gutenberg raw). */
 export function extractWpContentBlocks(story: Record<string, unknown>): WpContentBlock[] {
   const top = story.blocks;
   if (Array.isArray(top) && top.length > 0) {
-    return top as WpContentBlock[];
+    return normalizeWpBlockList(top);
   }
 
   const content = story.content;
   if (content && typeof content === "object" && !Array.isArray(content)) {
     const contentBlocks = (content as { blocks?: unknown }).blocks;
     if (Array.isArray(contentBlocks) && contentBlocks.length > 0) {
-      return contentBlocks as WpContentBlock[];
+      return normalizeWpBlockList(contentBlocks);
     }
     const raw = pickRawContent(content);
     if (raw.includes("<!-- wp:")) {
       const parsed = parseGutenbergRawTopLevel(raw);
-      if (parsed.length > 0) return parsed;
+      if (parsed.length > 0) return parsed.map(normalizeWpBlock);
     }
   }
 
@@ -213,7 +255,7 @@ export function extractWpContentBlocks(story: Record<string, unknown>): WpConten
   if (meta && typeof meta === "object" && !Array.isArray(meta)) {
     const metaBlocks = (meta as { blocks?: unknown }).blocks;
     if (Array.isArray(metaBlocks) && metaBlocks.length > 0) {
-      return metaBlocks as WpContentBlock[];
+      return normalizeWpBlockList(metaBlocks);
     }
   }
 
@@ -361,6 +403,32 @@ function isLayoutBlock(name: string): boolean {
   );
 }
 
+/** Hero / decorative blocks with no body text (e.g. `vmware/hero` → empty `article-hero` div). */
+function isSkippedBlock(name: string): boolean {
+  return (
+    isLayoutBlock(name) ||
+    name === "vmware/hero" ||
+    name.endsWith("/hero") ||
+    name === "core/post-featured-image"
+  );
+}
+
+/** Walk `content.rendered` segments when block `attributes` are empty (common on VMware stories). */
+class RenderedSegmentCursor {
+  private idx = 0;
+
+  constructor(private readonly segments: HtmlSegment[]) {}
+
+  take(kind: "paragraph" | "heading"): HtmlSegment | undefined {
+    while (this.idx < this.segments.length) {
+      const seg = this.segments[this.idx]!;
+      this.idx += 1;
+      if (seg.kind === kind) return seg;
+    }
+    return undefined;
+  }
+}
+
 export async function buildBodyContentFromWpStory(
   story: Record<string, unknown>,
   uids: BlogBodyBlockUids,
@@ -385,7 +453,18 @@ export async function buildBodyContentFromWpStory(
 
   if (useBlocks && wpBlocks.length > 0) {
     stats.source = "wp_blocks";
-    const blocks = await convertWpBlocks(wpBlocks, uids, resolveImage, stats, log);
+    const renderedFallback = pickRenderedContent(story.content);
+    const segmentCursor = renderedFallback
+      ? new RenderedSegmentCursor(parseRenderedHtmlSegments(renderedFallback))
+      : undefined;
+    const blocks = await convertWpBlocks(
+      wpBlocks,
+      uids,
+      resolveImage,
+      stats,
+      log,
+      segmentCursor
+    );
     return { blocks, stats };
   }
 
@@ -464,16 +543,52 @@ async function convertWpBlocks(
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
   stats: BodyContentBuildResult["stats"],
-  log?: (msg: string) => void
+  log?: (msg: string) => void,
+  segmentCursor?: RenderedSegmentCursor
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
 
   for (const block of wpBlocks) {
-    const converted = await convertOneWpBlock(block, uids, resolveImage, stats, log);
+    const converted = await convertOneWpBlock(block, uids, resolveImage, stats, log, segmentCursor);
     out.push(...converted);
   }
 
   return out;
+}
+
+function paragraphHtmlFromBlock(
+  block: WpContentBlock,
+  segmentCursor?: RenderedSegmentCursor
+): string {
+  let html = stripUnsafeHtml(block.innerHTML ?? "");
+  if (!html) {
+    const content = pickString(block.attrs?.content);
+    if (content) {
+      html = /<[a-z][\s\S]*>/i.test(content) ? stripUnsafeHtml(content) : `<p>${content}</p>`;
+    }
+  }
+  if (!html && segmentCursor) {
+    const seg = segmentCursor.take("paragraph");
+    if (seg?.kind === "paragraph") html = stripUnsafeHtml(seg.html);
+  }
+  return html;
+}
+
+function headingFromBlock(
+  block: WpContentBlock,
+  segmentCursor?: RenderedSegmentCursor
+): { text: string; level: number } | undefined {
+  let level = pickPositiveInt(block.attrs?.level) ?? 2;
+  let text = pickString(block.attrs?.content) || stripTags(block.innerHTML ?? "");
+  if (!text && segmentCursor) {
+    const seg = segmentCursor.take("heading");
+    if (seg?.kind === "heading") {
+      text = stripTags(seg.html);
+      level = seg.level;
+    }
+  }
+  if (!text) return undefined;
+  return { text, level };
 }
 
 async function convertOneWpBlock(
@@ -481,44 +596,60 @@ async function convertOneWpBlock(
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
   stats: BodyContentBuildResult["stats"],
-  log?: (msg: string) => void
+  log?: (msg: string) => void,
+  segmentCursor?: RenderedSegmentCursor
 ): Promise<Record<string, unknown>[]> {
-  const name = normalizeBlockName(block.blockName);
+  const normalized = normalizeWpBlock(block);
+  const name = normalizeBlockName(normalized.blockName);
   const result: Record<string, unknown>[] = [];
 
-  if (!name || isLayoutBlock(name)) {
-    const inner = block.innerBlocks ?? [];
-    const nested: Record<string, unknown>[] = [];
-    for (const child of inner) {
-      nested.push(...(await convertOneWpBlock(child, uids, resolveImage, stats, log)));
+  if (!name || isSkippedBlock(name)) {
+    if (name && name !== "vmware/hero" && !name.endsWith("/hero")) {
+      const inner = normalized.innerBlocks ?? [];
+      const nested: Record<string, unknown>[] = [];
+      for (const child of inner) {
+        nested.push(
+          ...(await convertOneWpBlock(child, uids, resolveImage, stats, log, segmentCursor))
+        );
+      }
+      return nested;
     }
-    return nested;
+    if (name) log?.(`skipped block ${name}`);
+    stats.skipped += 1;
+    return [];
   }
 
   if (name === "core/paragraph" || name === "core/freeform") {
-    const html = stripUnsafeHtml(block.innerHTML ?? "");
-    if (!html) return [];
+    const html = paragraphHtmlFromBlock(normalized, segmentCursor);
+    if (!html) {
+      stats.skipped += 1;
+      log?.(`skipped core/paragraph (no content in attributes or rendered)`);
+      return [];
+    }
     outPushText(uids, { text: html }, stats, result);
     return result;
   }
 
   if (name === "core/heading") {
-    const level = pickPositiveInt(block.attrs?.level) ?? 2;
-    const text = stripTags(block.innerHTML ?? "");
-    if (!text) return [];
+    const heading = headingFromBlock(normalized, segmentCursor);
+    if (!heading) {
+      stats.skipped += 1;
+      log?.(`skipped core/heading (no content in attributes or rendered)`);
+      return [];
+    }
     const fields =
-      level <= 2
-        ? { [uids.text.groupTitle]: text }
-        : { [uids.text.subhead]: text };
+      heading.level <= 2
+        ? { [uids.text.groupTitle]: heading.text }
+        : { [uids.text.subhead]: heading.text };
     result.push(wrapModularBlock(uids.text.blockUid, fields));
     stats.text += 1;
     return result;
   }
 
   if (name === "core/image") {
-    const attachmentId = pickPositiveInt(block.attrs?.id);
-    const imageUrl = pickString(block.attrs?.url);
-    const caption = pickString(block.attrs?.caption) || pickString(block.attrs?.alt);
+    const attachmentId = pickPositiveInt(normalized.attrs?.id);
+    const imageUrl = pickString(normalized.attrs?.url);
+    const caption = pickString(normalized.attrs?.caption) || pickString(normalized.attrs?.alt);
     const assetUid = await resolveImage({
       attachmentId,
       imageUrl,
@@ -542,18 +673,18 @@ async function convertOneWpBlock(
   }
 
   if (name === "core/media-text") {
-    const attachmentId = pickPositiveInt(block.attrs?.mediaId);
-    const imageUrl = pickString(block.attrs?.mediaUrl);
+    const attachmentId = pickPositiveInt(normalized.attrs?.mediaId);
+    const imageUrl = pickString(normalized.attrs?.mediaUrl);
     const assetUid = await resolveImage({
       attachmentId,
       imageUrl,
       purpose: "body image (core/media-text)",
     });
     const textHtml = stripUnsafeHtml(
-      (block.innerBlocks ?? [])
-        .map((b) => b.innerHTML ?? "")
+      (normalized.innerBlocks ?? [])
+        .map((b) => paragraphHtmlFromBlock(normalizeWpBlock(b), segmentCursor))
         .join("")
-        .trim() || block.innerHTML || ""
+        .trim() || normalized.innerHTML || ""
     );
     if (!assetUid && !textHtml) {
       stats.skipped += 1;
@@ -566,8 +697,8 @@ async function convertOneWpBlock(
         ...(uids.imageEnlargeDefault !== undefined
           ? { [uids.imageTextWrap.imageEnlarge]: uids.imageEnlargeDefault }
           : {}),
-        ...(pickString(block.attrs?.mediaPosition)
-          ? { [uids.imageTextWrap.imagePosition]: pickString(block.attrs?.mediaPosition) }
+        ...(pickString(normalized.attrs?.mediaPosition)
+          ? { [uids.imageTextWrap.imagePosition]: pickString(normalized.attrs?.mediaPosition) }
           : {}),
       });
     }
@@ -580,12 +711,13 @@ async function convertOneWpBlock(
   }
 
   if (name === "core/quote" || name === "core/pullquote") {
-    const parsed = parseQuoteFromHtml(block.innerHTML ?? "");
+    const parsed = parseQuoteFromHtml(normalized.innerHTML ?? "");
     const quote =
       parsed.quote ||
-      pickString(block.attrs?.value) ||
-      stripTags(block.innerHTML ?? "");
-    const author = parsed.author || pickString(block.attrs?.citation);
+      pickString(normalized.attrs?.value) ||
+      pickString(normalized.attrs?.content) ||
+      stripTags(normalized.innerHTML ?? "");
+    const author = parsed.author || pickString(normalized.attrs?.citation);
     if (!quote) {
       stats.skipped += 1;
       return [];
@@ -601,7 +733,7 @@ async function convertOneWpBlock(
   }
 
   if (name === "core/embed" || name === "core/video") {
-    const url = pickString(block.attrs?.url) || pickString(block.attrs?.src);
+    const url = pickString(normalized.attrs?.url) || pickString(normalized.attrs?.src);
     if (!url) {
       stats.skipped += 1;
       return [];
@@ -611,21 +743,23 @@ async function convertOneWpBlock(
     return result;
   }
 
-  // Unknown block: try innerHTML as text, else recurse inner blocks.
-  if (block.innerHTML?.trim()) {
-    const html = stripUnsafeHtml(block.innerHTML);
-    if (html) {
-      outPushText(uids, { text: html }, stats, result);
-      log?.(`mapped unknown block ${name} as text`);
-      return result;
-    }
+  // Unknown block: try attributes.content / innerHTML as text, else recurse inner blocks.
+  const unknownText =
+    pickString(normalized.attrs?.content) || stripUnsafeHtml(normalized.innerHTML ?? "");
+  if (unknownText) {
+    const html = /<[a-z][\s\S]*>/i.test(unknownText) ? stripUnsafeHtml(unknownText) : `<p>${unknownText}</p>`;
+    outPushText(uids, { text: html }, stats, result);
+    log?.(`mapped unknown block ${name} as text`);
+    return result;
   }
 
-  const inner = block.innerBlocks ?? [];
+  const inner = normalized.innerBlocks ?? [];
   if (inner.length > 0) {
     const nested: Record<string, unknown>[] = [];
     for (const child of inner) {
-      nested.push(...(await convertOneWpBlock(child, uids, resolveImage, stats, log)));
+      nested.push(
+        ...(await convertOneWpBlock(child, uids, resolveImage, stats, log, segmentCursor))
+      );
     }
     return nested;
   }
