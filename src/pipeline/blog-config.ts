@@ -4,11 +4,18 @@
  * Public URL: `/articles/{slug}` — see `blogArticlePageUrlPath`.
  */
 
+import type { FileRefShape } from "./blog-author-config.js";
+import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
+import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { WpEntityKind } from "../mapping-store.js";
+import type { SeoSocialFieldUids } from "./seo-social-payload.js";
 
 export type BlogReferenceShape = "object" | "array";
 
-export type BlogFieldUids = {
+/** How banner_image is modeled on the content type (same options as category_thumbnail). */
+export type BannerImageLayout = "group" | "global" | "file";
+
+export type BlogFieldUids = SeoSocialFieldUids & {
   /** CMS Asset Name (entry title + field UID). */
   cmsAssetName: string;
   url: string;
@@ -20,11 +27,39 @@ export type BlogFieldUids = {
   headline: string;
   subHeader: string;
   shortLinkText: string;
+  bannerImage: string;
+  /** Nested file field UID inside banner image group/global (`file` in your stack). */
+  bannerImageFileField: string;
+  bannerImageLayout: BannerImageLayout;
   bannerVideo: string;
   byline: string;
   blogAuthorProfile: string;
   referenceShape: BlogReferenceShape;
+  /** `name` = headline/title; `wp_seo` = Yoast/meta description when present. */
+  metaDescriptionSource: MetaDescriptionSource;
+  fileRefShape: FileRefShape;
 };
+
+export function loadBlogMetaDescriptionSource(): MetaDescriptionSource {
+  return (process.env.BLOG_META_DESCRIPTION_SOURCE ?? "wp_seo").toLowerCase() === "name"
+    ? "name"
+    : "wp_seo";
+}
+
+function loadBannerImageLayout(): BannerImageLayout {
+  const layout = (process.env.BLOG_BANNER_IMAGE_LAYOUT ?? "").toLowerCase();
+  if (layout === "group" || layout === "global" || layout === "file") return layout;
+  if (process.env.BLOG_BANNER_IMAGE_IS_GLOBAL === "1") return "global";
+  if (process.env.BLOG_BANNER_IMAGE_IS_GLOBAL === "0") return "group";
+  return "group";
+}
+
+function loadBlogSeoPageUrlShape(): "string" | "modular" | "group" {
+  const raw = (process.env.BLOG_SEO_PAGE_URL_SHAPE ?? "group").toLowerCase();
+  if (raw === "modular") return "modular";
+  if (raw === "string") return "string";
+  return "group";
+}
 
 export function loadBlogReferenceShape(): BlogReferenceShape {
   const raw = (process.env.BLOG_REFERENCE_SHAPE ?? "object").toLowerCase();
@@ -78,6 +113,8 @@ export function blogArticlePageUrlPath(slug: string): string {
 }
 
 export function loadBlogFieldUids(): BlogFieldUids {
+  const bannerFile = process.env.BLOG_BANNER_IMAGE_FILE_FIELD?.trim() || "file";
+
   return {
     cmsAssetName: process.env.BLOG_FIELD_CMS_ASSET_NAME ?? "title",
     url: process.env.BLOG_FIELD_URL ?? "url",
@@ -90,10 +127,29 @@ export function loadBlogFieldUids(): BlogFieldUids {
     headline: process.env.BLOG_FIELD_HEADLINE ?? "headline",
     subHeader: process.env.BLOG_FIELD_SUB_HEADER ?? "sub_header",
     shortLinkText: process.env.BLOG_FIELD_SHORT_LINK_TEXT ?? "short_link_text",
+    bannerImage: process.env.BLOG_FIELD_BANNER_IMAGE ?? "banner_image",
+    bannerImageFileField: bannerFile,
+    bannerImageLayout: loadBannerImageLayout(),
     bannerVideo: process.env.BLOG_FIELD_BANNER_VIDEO ?? "banner_video",
     byline: process.env.BLOG_FIELD_BYLINE ?? "byline",
     blogAuthorProfile: process.env.BLOG_FIELD_BLOG_AUTHOR_PROFILE ?? "blog_author_profile",
     referenceShape: loadBlogReferenceShape(),
+    seoSocialGroup: process.env.BLOG_FIELD_SEO_SOCIAL_GROUP ?? "seo",
+    seoTitle:
+      process.env.BLOG_FIELD_SEO_TITLE?.trim() ||
+      process.env.BLOG_FIELD_SEO_TITLE_TAG?.trim() ||
+      "title",
+    seoPageUrl: process.env.BLOG_FIELD_SEO_PAGE_URL ?? "page_url",
+    seoPageUrlShape: loadBlogSeoPageUrlShape(),
+    seoPageUrlInnerUrl: process.env.BLOG_FIELD_SEO_PAGE_URL_URL ?? "url",
+    seoPageUrlInnerStatus: process.env.BLOG_FIELD_SEO_PAGE_URL_STATUS ?? "status",
+    seoPageUrlStatusDefault: process.env.BLOG_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
+    seoCanonical: process.env.BLOG_FIELD_SEO_CANONICAL?.trim() ?? "",
+    metaDescription: process.env.BLOG_FIELD_META_DESCRIPTION ?? "meta_description",
+    metaImageGroup: process.env.BLOG_FIELD_META_IMAGE ?? "meta_image",
+    metaImageFileField: process.env.BLOG_SEO_META_IMAGE_FILE_FIELD?.trim() || "file",
+    metaDescriptionSource: loadBlogMetaDescriptionSource(),
+    fileRefShape: loadBlogAuthorFileRefShape(),
   };
 }
 

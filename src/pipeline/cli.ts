@@ -34,7 +34,7 @@ Env (see env/.env.migration-pipeline.example):
   CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE, CONTENTSTACK_ASSET_TARGET_URL_TEMPLATE,
   story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*, BLOG_AUTHOR_UPDATE, --update
   story_category→blog_category: CS_CONTENT_TYPE_BLOG_CATEGORY, BLOG_CATEGORY_FIELD_*, BLOG_CATEGORY_URL_LANGUAGE, BLOG_CATEGORY_UPDATE, --update
-  story→blog: CS_CONTENT_TYPE_BLOG, BLOG_FIELD_*, BLOG_URL_TEMPLATE=/articles/{slug}, BLOG_UPDATE, --update
+  story→blog: CS_CONTENT_TYPE_BLOG, BLOG_FIELD_*, BLOG_FIELD_SEO_*, BLOG_URL_TEMPLATE=/articles/{slug}, BLOG_UPDATE, --update
 `);
     process.exit(0);
   }

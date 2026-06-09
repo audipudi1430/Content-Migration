@@ -83,6 +83,16 @@ export function extractWpAuthorSeo(term: WpAuthorSeoSource, fallbackUrlPath: str
  * - `name` — entry/category name (default for blog_author and blog_category)
  * - `wp_seo` — Yoast / custom meta description when present
  */
+/** Title from WP REST (`title.rendered` or string). */
+export function pickRenderedTitle(title: unknown): string {
+  if (title && typeof title === "object" && "rendered" in title) {
+    const rendered = (title as { rendered?: unknown }).rendered;
+    if (typeof rendered === "string") return rendered.trim();
+  }
+  if (typeof title === "string") return title.trim();
+  return "";
+}
+
 export function resolveSeoMetaDescription(
   entryName: string,
   seo: WpAuthorSeoData,

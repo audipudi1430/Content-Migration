@@ -1,4 +1,10 @@
 import type { BlogFieldUids, BlogReferenceShape } from "./blog-config.js";
+import type { WpAuthorSeoData } from "./blog-author-seo.js";
+import { pickRenderedTitle } from "./blog-author-seo.js";
+import { setAuthorImageField, type ImageGroupFieldUids } from "./blog-author-payload.js";
+import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
+
+export { pickRenderedTitle };
 
 /** CMA reference value for a single linked entry. */
 export function contentstackEntryRefValue(
@@ -54,15 +60,6 @@ export function pickWpTermIds(value: unknown): number[] {
   }
   const single = toId(value);
   return single !== undefined ? [single] : [];
-}
-
-export function pickRenderedTitle(title: unknown): string {
-  if (title && typeof title === "object" && "rendered" in title) {
-    const rendered = (title as { rendered?: unknown }).rendered;
-    if (typeof rendered === "string") return rendered.trim();
-  }
-  if (typeof title === "string") return title.trim();
-  return "";
 }
 
 export function pickMetaString(meta: Record<string, unknown> | undefined, key: string): string {
@@ -160,4 +157,56 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   }
 
   return entry;
+}
+
+/**
+ * Banner image field — delegates to `setAuthorImageField` (same CMA shape as `category_thumbnail`).
+ * - `group` (default): `banner_image: { file: "blt..." }`
+ */
+export function setBannerImageField(
+  entry: Record<string, unknown>,
+  fields: BlogFieldUids,
+  assetUid: string,
+  mergeGroup?: Record<string, unknown>
+): void {
+  const imageFields: ImageGroupFieldUids = {
+    authorImage: fields.bannerImage,
+    authorImageFileField: fields.bannerImageFileField,
+    authorImageLayout: fields.bannerImageLayout,
+    fileRefShape: fields.fileRefShape,
+  };
+  setAuthorImageField(entry, imageFields, assetUid, mergeGroup);
+}
+
+/** WordPress `featured_media` attachment id from a story REST object. */
+export function pickFeaturedMediaId(story: Record<string, unknown>): number | undefined {
+  const v = story.featured_media;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v);
+  if (typeof v === "string") {
+    const n = Number(v.trim());
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return undefined;
+}
+
+export function setBlogSeoGlobal(
+  entry: Record<string, unknown>,
+  fields: BlogFieldUids,
+  seo: WpAuthorSeoData,
+  metaDescription: string,
+  mergeGlobal?: Record<string, unknown>,
+  metaImageAssetUid?: string,
+  mergeMetaImageGroup?: Record<string, unknown>,
+  logContext?: SeoLogContext
+): void {
+  setSeoSocialGroup(
+    entry,
+    fields,
+    seo,
+    metaDescription,
+    mergeGlobal,
+    metaImageAssetUid,
+    mergeMetaImageGroup,
+    logContext
+  );
 }

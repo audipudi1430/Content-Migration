@@ -22,15 +22,22 @@ import {
 } from "./blog-config.js";
 import { loadBlogBodyBlockUids, loadBlogBodySource } from "./blog-body-config.js";
 import { buildBodyContentFromWpStory, logWpStoryContentForMapping } from "./blog-body-content.js";
+import { resolveSeoMetaDescription } from "./blog-author-seo.js";
 import {
   buildBlogEntryPayload,
   pickMetaString,
   pickRenderedTitle,
   pickWpTermIds,
+  pickFeaturedMediaId,
+  setBannerImageField,
+  setBlogSeoGlobal,
   setScalar,
 } from "./blog-payload.js";
+import { extractWpStorySeo, pickYoastOgImageUrl, type WpStory } from "./blog-seo.js";
+import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import { resolveWpVideoEntryUid } from "./resolve-wp-video-entry.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -180,8 +187,20 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
-      const story = await wp.getJson<Record<string, unknown>>(rel);
+      const story = await wp.getJson<WpStory & Record<string, unknown>>(rel);
       logWpStoryContentForMapping(tRow.wp_id, story);
+
+      let existingEntry: Record<string, unknown> | undefined;
+      if (existingUid) {
+        try {
+          existingEntry = (await cs.getEntry(contentTypeUid, existingUid, locale)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          existingEntry = undefined;
+        }
+      }
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
       const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
@@ -240,6 +259,39 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         metaKeys,
       });
 
+      const featuredMediaId = pickFeaturedMediaId(story);
+      if (featuredMediaId) {
+        const { assetUid, source } = await resolveWpImageAssetUid({
+          attachmentId: featuredMediaId,
+          wp,
+          cs,
+          map,
+          mediaSheetPath,
+          folderUid,
+          locale,
+          purpose: `Story ${tRow.wp_id} banner_image (featured_media)`,
+          paths,
+          allTracking,
+        });
+        const existingBannerImage =
+          existingEntry?.[fields.bannerImage] &&
+          typeof existingEntry[fields.bannerImage] === "object" &&
+          !Array.isArray(existingEntry[fields.bannerImage])
+            ? (existingEntry[fields.bannerImage] as Record<string, unknown>)
+            : undefined;
+        setBannerImageField(entryPayload, fields, assetUid, existingBannerImage);
+        trackRef.featured_media_wp_id = String(featuredMediaId);
+        trackRef.contentstack_asset_uid = assetUid;
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
+            `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
+            `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+            `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
+        );
+      } else {
+        console.error(`[blog] wp_id=${tRow.wp_id} banner_image skipped: no featured_media`);
+      }
+
       const bodyResult = await buildBodyContentFromWpStory(
         story,
         bodyUids,
@@ -282,19 +334,88 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           return undefined;
         },
         bodySource,
-        (msg) => console.error(`[blog] wp_id=${tRow.wp_id} body: ${msg}`)
+        (msg) => console.error(`[blog] wp_id=${tRow.wp_id} body: ${msg}`),
+        async ({ attachmentId, embedUrl, purpose }) => {
+          if (attachmentId) {
+            const resolved = resolveWpVideoEntryUid({
+              attachmentId,
+              map,
+              mediaSheetPath,
+              locale,
+              paths,
+              allTracking,
+            });
+            if (resolved) return resolved.entryUid;
+          }
+          if (embedUrl) {
+            console.error(
+              `[blog] wp_id=${tRow.wp_id} body video skipped (${purpose}): embed URL not mapped — ${embedUrl}`
+            );
+          }
+          return undefined;
+        }
       );
 
       if (bodyResult.blocks.length > 0) {
         setScalar(entryPayload, bodyUids.fieldUid, bodyResult.blocks);
       }
 
+      const seo = extractWpStorySeo(story, slug);
+      const metaDescription = resolveSeoMetaDescription(cmsTitle, seo, fields.metaDescriptionSource);
+      const ogImageUrl = pickYoastOgImageUrl(story);
+
+      const existingSeoSocial =
+        existingEntry?.[fields.seoSocialGroup] &&
+        typeof existingEntry[fields.seoSocialGroup] === "object" &&
+        !Array.isArray(existingEntry[fields.seoSocialGroup])
+          ? (existingEntry[fields.seoSocialGroup] as Record<string, unknown>)
+          : undefined;
+
+      let metaImageAssetUid: string | undefined;
+      if (ogImageUrl) {
+        const resolved = await resolveWpImageAssetFromUrl({
+          imageUrl: ogImageUrl,
+          wp,
+          cs,
+          map,
+          mediaSheetPath,
+          folderUid,
+          locale,
+          purpose: `Story ${tRow.wp_id} seo.meta_image (yoast og_image)`,
+          paths,
+          allTracking,
+        });
+        if (resolved) {
+          metaImageAssetUid = resolved.assetUid;
+          trackRef.contentstack_asset_uid = resolved.assetUid;
+        } else {
+          console.error(`[blog] wp_id=${tRow.wp_id} og_image not resolved: ${ogImageUrl}`);
+        }
+      }
+
+      const existingMetaImageGroup =
+        existingSeoSocial?.[fields.metaImageGroup] &&
+        typeof existingSeoSocial[fields.metaImageGroup] === "object" &&
+        !Array.isArray(existingSeoSocial[fields.metaImageGroup])
+          ? (existingSeoSocial[fields.metaImageGroup] as Record<string, unknown>)
+          : undefined;
+
+      setBlogSeoGlobal(
+        entryPayload,
+        fields,
+        seo,
+        metaDescription,
+        existingSeoSocial,
+        metaImageAssetUid,
+        existingMetaImageGroup,
+        { wpId: tRow.wp_id, entity: "blog" }
+      );
+
       console.error(
         `[blog] wp_id=${tRow.wp_id} title="${cmsTitle}" url=${pageUrl} ` +
           `category=${categoryRefUid ?? "(none)"} author=${authorRefUid ?? "(none)"} ` +
           `body=${bodyResult.stats.source} blocks=${bodyResult.blocks.length} ` +
           `(text=${bodyResult.stats.text} image=${bodyResult.stats.image} ` +
-          `itw=${bodyResult.stats.imageTextWrap} quote=${bodyResult.stats.pullQuote} ` +
           `video=${bodyResult.stats.video} skipped=${bodyResult.stats.skipped}) ` +
           `sub_header="${pickMetaString(
             story.meta && typeof story.meta === "object" && !Array.isArray(story.meta)
@@ -303,29 +424,44 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             metaKeys.subHeader
           )}"`
       );
+      console.error(
+        `[blog] wp_id=${tRow.wp_id} seo global=${fields.seoSocialGroup} ` +
+          `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} ` +
+          `metaDescSource=${fields.metaDescriptionSource} metaDesc="${metaDescription}" ` +
+          `meta_image.file=${metaImageAssetUid ?? "(none)"}`
+      );
+      console.error(
+        `[blog] wp_id=${tRow.wp_id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
+      );
 
-      let entryUid: string;
-
-      if (updateExisting && existingUid) {
-        const updated = await cs.updateEntry(
-          contentTypeUid,
-          existingUid,
-          entryPayload as { title: string },
-          locale
-        );
-        entryUid = updated.uid ?? existingUid;
-        trackRef.migration_message = "Updated from WordPress (--update)";
-        console.error(`[blog] wp_id=${tRow.wp_id} UPDATED entry ${entryUid}`);
-      } else if (updateExisting && !existingUid) {
+      if (updateExisting && !existingUid) {
         throw new Error(
           "No Contentstack entry UID in map or tracking; run migrate without --update first"
         );
-      } else {
-        const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
-        entryUid = entry.uid;
-        trackRef.migration_message = "";
-        console.error(`[blog] wp_id=${tRow.wp_id} CREATED entry ${entryUid}`);
       }
+
+      const logCtx = { wpId: tRow.wp_id, entity: "blog" };
+      const { uid: entryUid, warning: pageUrlWarning } = await upsertContentstackEntryWithSeoFallback({
+        cs,
+        contentTypeUid,
+        payload: entryPayload as { title: string },
+        locale,
+        existingUid: updateExisting ? existingUid : undefined,
+        seoFields: fields,
+        logContext: logCtx,
+      });
+
+      if (pageUrlWarning) {
+        trackRef.migration_message = pageUrlWarning;
+        console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
+      } else if (updateExisting) {
+        trackRef.migration_message = "Updated from WordPress (--update)";
+      } else {
+        trackRef.migration_message = "";
+      }
+      console.error(
+        `[blog] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
+      );
 
       map.set({
         wpId: tRow.wp_id,

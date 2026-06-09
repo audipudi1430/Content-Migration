@@ -1,5 +1,6 @@
 import type { BlogBodyBlockUids, BlogBodySource } from "./blog-body-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
+import { contentstackEntryRefValue } from "./blog-payload.js";
 import { htmlToPlainWithBreaks, stripUnsafeHtml } from "./contentstack-rte.js";
 
 /** WordPress block — supports Gutenberg REST (`name`/`attributes`) and classic (`blockName`/`attrs`). */
@@ -22,18 +23,52 @@ export type BodyImageResolver = (opts: {
   purpose: string;
 }) => Promise<string | undefined>;
 
+export type BodyVideoResolver = (opts: {
+  attachmentId?: number;
+  embedUrl?: string;
+  purpose: string;
+}) => Promise<string | undefined>;
+
 export type BodyContentBuildResult = {
   blocks: Record<string, unknown>[];
   stats: {
     text: number;
     image: number;
-    imageTextWrap: number;
-    pullQuote: number;
     video: number;
     skipped: number;
     source: "wp_blocks" | "rendered_html";
   };
 };
+
+function imageBlockPayload(uids: BlogBodyBlockUids, assetUid: string): Record<string, unknown> {
+  return wrapModularBlock(uids.image.blockUid, {
+    [uids.image.file]: contentstackFileRefValue(assetUid, uids.fileRefShape),
+  });
+}
+
+function videoAudioBlockPayload(
+  uids: BlogBodyBlockUids,
+  videoEntryUid: string
+): Record<string, unknown> {
+  const { videoAudio } = uids;
+  return wrapModularBlock(videoAudio.blockUid, {
+    [videoAudio.video]: contentstackEntryRefValue(
+      videoEntryUid,
+      videoAudio.refContentTypeUid,
+      videoAudio.referenceShape
+    ),
+  });
+}
+
+function headingTextFields(
+  uids: BlogBodyBlockUids,
+  text: string,
+  level: number
+): Record<string, unknown> {
+  return level <= uids.headingGroupMaxLevel
+    ? { [uids.text.groupTitle]: text }
+    : { [uids.text.subhead]: text };
+}
 
 function pickPositiveInt(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v);
@@ -434,13 +469,12 @@ export async function buildBodyContentFromWpStory(
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
   sourceMode: BlogBodySource = "blocks_then_rendered",
-  log?: (msg: string) => void
+  log?: (msg: string) => void,
+  resolveVideo?: BodyVideoResolver
 ): Promise<BodyContentBuildResult> {
   const stats = {
     text: 0,
     image: 0,
-    imageTextWrap: 0,
-    pullQuote: 0,
     video: 0,
     skipped: 0,
     source: "wp_blocks" as "wp_blocks" | "rendered_html",
@@ -461,6 +495,7 @@ export async function buildBodyContentFromWpStory(
       wpBlocks,
       uids,
       resolveImage,
+      resolveVideo,
       stats,
       log,
       segmentCursor
@@ -481,11 +516,7 @@ export async function buildBodyContentFromWpStory(
     if (seg.kind === "heading") {
       const text = stripTags(seg.html);
       if (!text) continue;
-      const fields =
-        seg.level <= 2
-          ? { [uids.text.groupTitle]: text }
-          : { [uids.text.subhead]: text };
-      blocks.push(wrapModularBlock(uids.text.blockUid, fields));
+      blocks.push(wrapModularBlock(uids.text.blockUid, headingTextFields(uids, text, seg.level)));
       stats.text += 1;
       continue;
     }
@@ -501,13 +532,9 @@ export async function buildBodyContentFromWpStory(
     if (seg.kind === "quote") {
       const { quote, author } = parseQuoteFromHtml(seg.html);
       if (!quote) continue;
-      blocks.push(
-        wrapModularBlock(uids.pullQuote.blockUid, {
-          [uids.pullQuote.quote]: quote,
-          [uids.pullQuote.author]: author,
-        })
-      );
-      stats.pullQuote += 1;
+      const quoteHtml = author ? `<blockquote><p>${quote}</p><cite>${author}</cite></blockquote>` : `<p>${quote}</p>`;
+      blocks.push(wrapModularBlock(uids.text.blockUid, { [uids.text.text]: stripUnsafeHtml(quoteHtml) }));
+      stats.text += 1;
       continue;
     }
 
@@ -523,14 +550,7 @@ export async function buildBodyContentFromWpStory(
         log?.(`skipped image (no asset): ${parsed.src}`);
         continue;
       }
-      const imageFields: Record<string, unknown> = {
-        [uids.image.file]: contentstackFileRefValue(assetUid, uids.fileRefShape),
-        [uids.image.caption]: parsed.caption || parsed.alt,
-      };
-      if (uids.imageEnlargeDefault !== undefined) {
-        imageFields[uids.image.enlarge] = uids.imageEnlargeDefault;
-      }
-      blocks.push(wrapModularBlock(uids.image.blockUid, imageFields));
+      blocks.push(imageBlockPayload(uids, assetUid));
       stats.image += 1;
     }
   }
@@ -542,6 +562,7 @@ async function convertWpBlocks(
   wpBlocks: WpContentBlock[],
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
+  resolveVideo: BodyVideoResolver | undefined,
   stats: BodyContentBuildResult["stats"],
   log?: (msg: string) => void,
   segmentCursor?: RenderedSegmentCursor
@@ -549,7 +570,15 @@ async function convertWpBlocks(
   const out: Record<string, unknown>[] = [];
 
   for (const block of wpBlocks) {
-    const converted = await convertOneWpBlock(block, uids, resolveImage, stats, log, segmentCursor);
+    const converted = await convertOneWpBlock(
+      block,
+      uids,
+      resolveImage,
+      resolveVideo,
+      stats,
+      log,
+      segmentCursor
+    );
     out.push(...converted);
   }
 
@@ -595,6 +624,7 @@ async function convertOneWpBlock(
   block: WpContentBlock,
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
+  resolveVideo: BodyVideoResolver | undefined,
   stats: BodyContentBuildResult["stats"],
   log?: (msg: string) => void,
   segmentCursor?: RenderedSegmentCursor
@@ -609,7 +639,15 @@ async function convertOneWpBlock(
       const nested: Record<string, unknown>[] = [];
       for (const child of inner) {
         nested.push(
-          ...(await convertOneWpBlock(child, uids, resolveImage, stats, log, segmentCursor))
+          ...(await convertOneWpBlock(
+            child,
+            uids,
+            resolveImage,
+            resolveVideo,
+            stats,
+            log,
+            segmentCursor
+          ))
         );
       }
       return nested;
@@ -637,11 +675,9 @@ async function convertOneWpBlock(
       log?.(`skipped core/heading (no content in attributes or rendered)`);
       return [];
     }
-    const fields =
-      heading.level <= 2
-        ? { [uids.text.groupTitle]: heading.text }
-        : { [uids.text.subhead]: heading.text };
-    result.push(wrapModularBlock(uids.text.blockUid, fields));
+    result.push(
+      wrapModularBlock(uids.text.blockUid, headingTextFields(uids, heading.text, heading.level))
+    );
     stats.text += 1;
     return result;
   }
@@ -660,14 +696,7 @@ async function convertOneWpBlock(
       log?.(`skipped core/image wp attachment=${attachmentId ?? "?"} url=${imageUrl || "(none)"}`);
       return [];
     }
-    const imageFields: Record<string, unknown> = {
-      [uids.image.file]: contentstackFileRefValue(assetUid, uids.fileRefShape),
-      [uids.image.caption]: caption,
-    };
-    if (uids.imageEnlargeDefault !== undefined) {
-      imageFields[uids.image.enlarge] = uids.imageEnlargeDefault;
-    }
-    result.push(wrapModularBlock(uids.image.blockUid, imageFields));
+    result.push(imageBlockPayload(uids, assetUid));
     stats.image += 1;
     return result;
   }
@@ -686,27 +715,16 @@ async function convertOneWpBlock(
         .join("")
         .trim() || normalized.innerHTML || ""
     );
-    if (!assetUid && !textHtml) {
-      stats.skipped += 1;
-      return [];
-    }
-    const fields: Record<string, unknown> = {};
     if (assetUid) {
-      fields[uids.imageTextWrap.image] = compactFields({
-        [uids.imageTextWrap.imageFile]: contentstackFileRefValue(assetUid, uids.fileRefShape),
-        ...(uids.imageEnlargeDefault !== undefined
-          ? { [uids.imageTextWrap.imageEnlarge]: uids.imageEnlargeDefault }
-          : {}),
-        ...(pickString(normalized.attrs?.mediaPosition)
-          ? { [uids.imageTextWrap.imagePosition]: pickString(normalized.attrs?.mediaPosition) }
-          : {}),
-      });
+      result.push(imageBlockPayload(uids, assetUid));
+      stats.image += 1;
     }
     if (textHtml) {
-      fields[uids.imageTextWrap.text] = { [uids.imageTextWrap.textBody]: textHtml };
+      outPushText(uids, { text: textHtml }, stats, result);
     }
-    result.push(wrapModularBlock(uids.imageTextWrap.blockUid, fields));
-    stats.imageTextWrap += 1;
+    if (!assetUid && !textHtml) {
+      stats.skipped += 1;
+    }
     return result;
   }
 
@@ -722,23 +740,32 @@ async function convertOneWpBlock(
       stats.skipped += 1;
       return [];
     }
-    result.push(
-      wrapModularBlock(uids.pullQuote.blockUid, {
-        [uids.pullQuote.quote]: quote,
-        [uids.pullQuote.author]: author,
-      })
-    );
-    stats.pullQuote += 1;
+    const quoteHtml = author
+      ? `<blockquote><p>${quote}</p><cite>${author}</cite></blockquote>`
+      : `<p>${quote}</p>`;
+    outPushText(uids, { text: stripUnsafeHtml(quoteHtml) }, stats, result);
     return result;
   }
 
   if (name === "core/embed" || name === "core/video") {
-    const url = pickString(normalized.attrs?.url) || pickString(normalized.attrs?.src);
-    if (!url) {
+    const attachmentId = pickPositiveInt(normalized.attrs?.id);
+    const embedUrl = pickString(normalized.attrs?.url) || pickString(normalized.attrs?.src);
+    if (!resolveVideo) {
       stats.skipped += 1;
+      log?.(`skipped ${name}: video resolver not configured`);
       return [];
     }
-    result.push(wrapModularBlock(uids.video.blockUid, { [uids.video.video]: url }));
+    const videoEntryUid = await resolveVideo({
+      attachmentId,
+      embedUrl,
+      purpose: `body video (${name})`,
+    });
+    if (!videoEntryUid) {
+      stats.skipped += 1;
+      log?.(`skipped ${name}: no video entry for attachment=${attachmentId ?? "?"} url=${embedUrl || "(none)"}`);
+      return [];
+    }
+    result.push(videoAudioBlockPayload(uids, videoEntryUid));
     stats.video += 1;
     return result;
   }
@@ -758,7 +785,15 @@ async function convertOneWpBlock(
     const nested: Record<string, unknown>[] = [];
     for (const child of inner) {
       nested.push(
-        ...(await convertOneWpBlock(child, uids, resolveImage, stats, log, segmentCursor))
+        ...(await convertOneWpBlock(
+          child,
+          uids,
+          resolveImage,
+          resolveVideo,
+          stats,
+          log,
+          segmentCursor
+        ))
       );
     }
     return nested;
