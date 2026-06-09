@@ -76,6 +76,119 @@ function pickRawContent(content: unknown): string {
   return "";
 }
 
+function loadBodyLogMaxBytes(): number {
+  const raw = process.env.BLOG_BODY_LOG_MAX_BYTES ?? process.env.MIGRATION_WP_EXTRACT_JSON_MAX_BYTES ?? "8000";
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 8000;
+}
+
+function truncateJson(value: unknown, maxBytes: number): string {
+  try {
+    const s = JSON.stringify(value);
+    return s.length <= maxBytes ? s : `${s.slice(0, maxBytes)}…(${s.length} bytes total)`;
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateStringField(value: unknown, maxLen: number): unknown {
+  if (typeof value !== "string") return value;
+  if (value.length <= maxLen) return value;
+  return `${value.slice(0, maxLen)}…(${value.length} chars total)`;
+}
+
+/** Shallow copy of `content` with long `rendered` / `raw` strings truncated for logs. */
+export function contentAttributeForLog(content: unknown, maxFieldLen = 1200): unknown {
+  if (content === undefined || content === null) return content;
+  if (typeof content === "string") return truncateStringField(content, maxFieldLen);
+  if (typeof content !== "object" || Array.isArray(content)) return content;
+
+  const src = content as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...src };
+  for (const key of ["rendered", "raw", "protected"]) {
+    if (key in out) out[key] = truncateStringField(out[key], maxFieldLen);
+  }
+  return out;
+}
+
+/** Compact per-block summary for mapping discovery. */
+export function summarizeWpBlocksForLog(blocks: WpContentBlock[]): unknown[] {
+  const walk = (list: WpContentBlock[], depth = 0): unknown[] =>
+    list.map((b) => ({
+      blockName: b.blockName ?? null,
+      attrs: b.attrs ?? {},
+      innerHTML_len: (b.innerHTML ?? "").length,
+      innerBlocks_count: b.innerBlocks?.length ?? 0,
+      innerBlocks: b.innerBlocks?.length ? walk(b.innerBlocks, depth + 1) : undefined,
+    }));
+  return walk(blocks);
+}
+
+/**
+ * Log WordPress `content`, `content.blocks`, and other block sources for mapping verification.
+ * Controlled by `BLOG_BODY_LOG_CONTENT=1` (default on).
+ */
+export function logWpStoryContentForMapping(wpId: number, story: Record<string, unknown>): void {
+  if (process.env.BLOG_BODY_LOG_CONTENT === "0") return;
+
+  const maxBytes = loadBodyLogMaxBytes();
+  const content = story.content;
+
+  console.error(
+    `[blog] wp_id=${wpId} content attribute: ${truncateJson(contentAttributeForLog(content), maxBytes)}`
+  );
+
+  if (content && typeof content === "object" && !Array.isArray(content)) {
+    const contentBlocks = (content as { blocks?: unknown }).blocks;
+    if (contentBlocks === undefined) {
+      console.error(`[blog] wp_id=${wpId} content.blocks: (missing)`);
+    } else if (!Array.isArray(contentBlocks)) {
+      console.error(
+        `[blog] wp_id=${wpId} content.blocks: (not an array) ${truncateJson(contentBlocks, maxBytes)}`
+      );
+    } else if (contentBlocks.length === 0) {
+      console.error(`[blog] wp_id=${wpId} content.blocks: []`);
+    } else {
+      console.error(
+        `[blog] wp_id=${wpId} content.blocks summary: ${truncateJson(
+          summarizeWpBlocksForLog(contentBlocks as WpContentBlock[]),
+          maxBytes
+        )}`
+      );
+      console.error(
+        `[blog] wp_id=${wpId} content.blocks full: ${truncateJson(contentBlocks, maxBytes)}`
+      );
+    }
+  } else {
+    console.error(`[blog] wp_id=${wpId} content.blocks: (content is not an object)`);
+  }
+
+  const topBlocks = story.blocks;
+  if (topBlocks !== undefined) {
+    if (!Array.isArray(topBlocks)) {
+      console.error(
+        `[blog] wp_id=${wpId} story.blocks: (not an array) ${truncateJson(topBlocks, maxBytes)}`
+      );
+    } else if (topBlocks.length === 0) {
+      console.error(`[blog] wp_id=${wpId} story.blocks: []`);
+    } else {
+      console.error(
+        `[blog] wp_id=${wpId} story.blocks summary: ${truncateJson(
+          summarizeWpBlocksForLog(topBlocks as WpContentBlock[]),
+          maxBytes
+        )}`
+      );
+      console.error(`[blog] wp_id=${wpId} story.blocks full: ${truncateJson(topBlocks, maxBytes)}`);
+    }
+  }
+
+  const extracted = extractWpContentBlocks(story);
+  const blockNames = extracted.map((b) => b.blockName ?? "(null)").join(", ") || "(none)";
+  console.error(
+    `[blog] wp_id=${wpId} extractWpContentBlocks: count=${extracted.length} names=[${blockNames}]`
+  );
+}
+
 /** Collect WP blocks from common REST shapes (`blocks`, `content.blocks`, Gutenberg raw). */
 export function extractWpContentBlocks(story: Record<string, unknown>): WpContentBlock[] {
   const top = story.blocks;

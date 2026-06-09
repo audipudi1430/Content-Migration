@@ -21,7 +21,7 @@ import {
   loadBlogWpTaxonomyCategory,
 } from "./blog-config.js";
 import { loadBlogBodyBlockUids, loadBlogBodySource } from "./blog-body-config.js";
-import { buildBodyContentFromWpStory } from "./blog-body-content.js";
+import { buildBodyContentFromWpStory, logWpStoryContentForMapping } from "./blog-body-content.js";
 import {
   buildBlogEntryPayload,
   pickMetaString,
@@ -181,6 +181,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
       const story = await wp.getJson<Record<string, unknown>>(rel);
+      logWpStoryContentForMapping(tRow.wp_id, story);
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
       const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
