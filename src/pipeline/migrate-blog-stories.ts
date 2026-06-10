@@ -33,7 +33,12 @@ import {
   setBlogSeoGlobal,
   setScalar,
 } from "./blog-payload.js";
-import { extractWpStorySeo, pickYoastOgImageUrl, type WpStory } from "./blog-seo.js";
+import {
+  fetchWpStoryForMigration,
+  loadBlogFetchBySlug,
+  storySlugForFetch,
+} from "./blog-story-fetch.js";
+import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
@@ -108,6 +113,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
   const bodyUids = loadBlogBodyBlockUids();
   const bodySource = loadBlogBodySource();
+  const fetchBySlug = loadBlogFetchBySlug();
 
   const cfg = loadConfig();
   const mongoCfg = loadMongoConfig();
@@ -136,6 +142,11 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
   if (updateExisting) {
     console.error("[migrate-blog-stories] --update: will PUT existing Contentstack entries when UID is known.");
+  }
+  if (fetchBySlug) {
+    console.error(
+      "[migrate-blog-stories] Fetching stories via REST ?slug= (content.blocks + content.rendered)."
+    );
   }
 
   const allTracking = loadAllTracking(paths);
@@ -186,8 +197,17 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       }
 
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
-      const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
-      const story = await wp.getJson<WpStory & Record<string, unknown>>(rel);
+      const { story, fetchUrl } = await fetchWpStoryForMigration(
+        wp,
+        restBase,
+        trackRef,
+        tRow.wp_id,
+        fetchBySlug
+      );
+      console.error(
+        `[blog] wp_id=${tRow.wp_id} WP GET ${fetchUrl} ` +
+          `(slug=${storySlugForFetch(trackRef) || "(from response)"})`
+      );
       logWpStoryContentForMapping(tRow.wp_id, story);
 
       let existingEntry: Record<string, unknown> | undefined;
