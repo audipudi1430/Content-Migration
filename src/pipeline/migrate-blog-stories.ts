@@ -21,7 +21,11 @@ import {
   loadBlogWpTaxonomyCategory,
 } from "./blog-config.js";
 import { loadBlogBodyBlockUids, loadBlogBodySource } from "./blog-body-config.js";
-import { buildBodyContentFromWpStory, logWpStoryContentForMapping } from "./blog-body-content.js";
+import {
+  buildBodyContentFromWpStory,
+  logWpStoryContentForMapping,
+  modularBodyGlobalValue,
+} from "./blog-body-content.js";
 import { resolveSeoMetaDescription } from "./blog-author-seo.js";
 import {
   buildBlogEntryPayload,
@@ -31,6 +35,7 @@ import {
   pickFeaturedMediaId,
   setBannerImageField,
   setBlogSeoGlobal,
+  setModularBodyField,
   setScalar,
 } from "./blog-payload.js";
 import {
@@ -377,7 +382,15 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       );
 
       if (bodyResult.blocks.length > 0) {
-        setScalar(entryPayload, bodyUids.fieldUid, bodyResult.blocks);
+        setModularBodyField(
+          entryPayload,
+          bodyUids.fieldUid,
+          modularBodyGlobalValue(bodyResult.blocks, bodyUids)
+        );
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} modular_body blocks=${bodyResult.blocks.length} ` +
+            `field=${bodyUids.fieldUid}.${bodyUids.modularBlocksFieldUid}`
+        );
       }
 
       const seo = extractWpStorySeo(story, slug);

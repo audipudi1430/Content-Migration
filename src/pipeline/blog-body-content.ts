@@ -64,10 +64,10 @@ function headingTextFields(
   uids: BlogBodyBlockUids,
   text: string,
   level: number
-): Record<string, unknown> {
+): { groupTitle?: string; subhead?: string } {
   return level <= uids.headingGroupMaxLevel
-    ? { [uids.text.groupTitle]: text }
-    : { [uids.text.subhead]: text };
+    ? { groupTitle: text }
+    : { subhead: text };
 }
 
 function pickPositiveInt(v: unknown): number | undefined {
@@ -100,6 +100,119 @@ function compactFields(fields: Record<string, unknown>): Record<string, unknown>
 
 function wrapModularBlock(blockUid: string, fields: Record<string, unknown>): Record<string, unknown> {
   return { [blockUid]: compactFields(fields) };
+}
+
+/** Text modular block — always includes `group_title`, `subhead`, `text` (empty string when unset). */
+function textBlockPayload(uids: BlogBodyBlockUids, fields: {
+  groupTitle?: string;
+  subhead?: string;
+  text?: string;
+}): Record<string, unknown> {
+  return {
+    [uids.text.blockUid]: {
+      [uids.text.groupTitle]: fields.groupTitle ?? "",
+      [uids.text.subhead]: fields.subhead ?? "",
+      [uids.text.text]: fields.text ?? "",
+    },
+  };
+}
+
+function joinHtmlChunks(a: string, b: string): string {
+  const left = a.trim();
+  const right = b.trim();
+  if (!left) return right;
+  if (!right) return left;
+  return left + right;
+}
+
+function readTextBlockFields(
+  block: Record<string, unknown>,
+  uids: BlogBodyBlockUids
+): { groupTitle: string; subhead: string; text: string } | undefined {
+  const inner = block[uids.text.blockUid];
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return undefined;
+  const f = inner as Record<string, unknown>;
+  return {
+    groupTitle: pickString(f[uids.text.groupTitle]),
+    subhead: pickString(f[uids.text.subhead]),
+    text: pickString(f[uids.text.text]),
+  };
+}
+
+/**
+ * Merge consecutive text blocks into section blocks like Contentstack stores them:
+ * heading → `subhead`, following paragraphs → concatenated `text` in the same block.
+ */
+export function consolidateModularTextBlocks(
+  blocks: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  let pending: { groupTitle: string; subhead: string; text: string } | null = null;
+
+  const flush = (): void => {
+    if (!pending) return;
+    if (!pending.groupTitle && !pending.subhead && !pending.text) {
+      pending = null;
+      return;
+    }
+    out.push(
+      textBlockPayload(uids, {
+        groupTitle: pending.groupTitle,
+        subhead: pending.subhead,
+        text: pending.text,
+      })
+    );
+    pending = null;
+  };
+
+  for (const block of blocks) {
+    const textFields = readTextBlockFields(block, uids);
+    if (!textFields) {
+      flush();
+      out.push(block);
+      continue;
+    }
+
+    const { groupTitle, subhead, text } = textFields;
+    const isHeadingOnly = Boolean(groupTitle || subhead) && !text;
+    const isTextOnly = Boolean(text) && !groupTitle && !subhead;
+
+    if (isHeadingOnly) {
+      flush();
+      pending = { groupTitle, subhead, text: "" };
+      continue;
+    }
+
+    if (isTextOnly) {
+      if (!pending) {
+        pending = { groupTitle: "", subhead: "", text };
+      } else {
+        pending.text = joinHtmlChunks(pending.text, text);
+      }
+      continue;
+    }
+
+    flush();
+    out.push(
+      textBlockPayload(uids, {
+        groupTitle,
+        subhead,
+        text,
+      })
+    );
+  }
+
+  flush();
+  return out;
+}
+
+/** Wrap modular blocks in the Body Content global field object for CMA. */
+export function modularBodyGlobalValue(
+  blocks: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): Record<string, unknown> {
+  return { [uids.modularBlocksFieldUid]: blocks };
 }
 
 function pickRenderedContent(content: unknown): string {
@@ -329,6 +442,7 @@ export function parseGutenbergRawTopLevel(raw: string): WpContentBlock[] {
 type HtmlSegment =
   | { kind: "heading"; level: number; html: string }
   | { kind: "paragraph"; html: string }
+  | { kind: "list"; html: string }
   | { kind: "figure"; html: string }
   | { kind: "quote"; html: string }
   | { kind: "image"; html: string; src: string; alt: string };
@@ -357,6 +471,10 @@ export function parseRenderedHtmlSegments(html: string): HtmlSegment[] {
     {
       re: /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
       build: (m) => ({ kind: "quote", html: m[0] ?? "" }),
+    },
+    {
+      re: /<(ul|ol)[^>]*>[\s\S]*?<\/\1>/gi,
+      build: (m) => ({ kind: "list", html: m[0] ?? "" }),
     },
     {
       re: /<p[^>]*>[\s\S]*?<\/p>/gi,
@@ -491,7 +609,7 @@ export async function buildBodyContentFromWpStory(
     const segmentCursor = renderedFallback
       ? new RenderedSegmentCursor(parseRenderedHtmlSegments(renderedFallback))
       : undefined;
-    const blocks = await convertWpBlocks(
+    const rawBlocks = await convertWpBlocks(
       wpBlocks,
       uids,
       resolveImage,
@@ -500,6 +618,7 @@ export async function buildBodyContentFromWpStory(
       log,
       segmentCursor
     );
+    const blocks = consolidateModularTextBlocks(rawBlocks, uids);
     return { blocks, stats };
   }
 
@@ -516,7 +635,7 @@ export async function buildBodyContentFromWpStory(
     if (seg.kind === "heading") {
       const text = stripTags(seg.html);
       if (!text) continue;
-      blocks.push(wrapModularBlock(uids.text.blockUid, headingTextFields(uids, text, seg.level)));
+      blocks.push(textBlockPayload(uids, headingTextFields(uids, text, seg.level)));
       stats.text += 1;
       continue;
     }
@@ -524,7 +643,15 @@ export async function buildBodyContentFromWpStory(
     if (seg.kind === "paragraph") {
       const text = stripUnsafeHtml(seg.html);
       if (!text) continue;
-      blocks.push(wrapModularBlock(uids.text.blockUid, { [uids.text.text]: text }));
+      blocks.push(textBlockPayload(uids, { text }));
+      stats.text += 1;
+      continue;
+    }
+
+    if (seg.kind === "list") {
+      const text = stripUnsafeHtml(seg.html);
+      if (!text) continue;
+      blocks.push(textBlockPayload(uids, { text }));
       stats.text += 1;
       continue;
     }
@@ -533,7 +660,7 @@ export async function buildBodyContentFromWpStory(
       const { quote, author } = parseQuoteFromHtml(seg.html);
       if (!quote) continue;
       const quoteHtml = author ? `<blockquote><p>${quote}</p><cite>${author}</cite></blockquote>` : `<p>${quote}</p>`;
-      blocks.push(wrapModularBlock(uids.text.blockUid, { [uids.text.text]: stripUnsafeHtml(quoteHtml) }));
+      blocks.push(textBlockPayload(uids, { text: stripUnsafeHtml(quoteHtml) }));
       stats.text += 1;
       continue;
     }
@@ -555,7 +682,8 @@ export async function buildBodyContentFromWpStory(
     }
   }
 
-  return { blocks, stats };
+  const consolidated = consolidateModularTextBlocks(blocks, uids);
+  return { blocks: consolidated, stats };
 }
 
 async function convertWpBlocks(
@@ -601,6 +729,56 @@ function paragraphHtmlFromBlock(
     if (seg?.kind === "paragraph") html = stripUnsafeHtml(seg.html);
   }
   return html;
+}
+
+function isOrderedList(attrs: Record<string, unknown> | undefined): boolean {
+  const v = attrs?.ordered;
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
+function listItemHtmlFromBlock(block: WpContentBlock): string {
+  const normalized = normalizeWpBlock(block);
+  const content = pickString(normalized.attrs?.content) || stripUnsafeHtml(normalized.innerHTML ?? "");
+
+  const nestedParts: string[] = [];
+  for (const child of normalized.innerBlocks ?? []) {
+    const childName = normalizeBlockName(normalizeWpBlock(child).blockName);
+    if (childName === "core/list") {
+      const listHtml = listHtmlFromBlock(child);
+      if (listHtml) nestedParts.push(listHtml);
+    } else if (childName === "core/list-item") {
+      const itemHtml = listItemHtmlFromBlock(child);
+      if (itemHtml) nestedParts.push(itemHtml);
+    }
+  }
+
+  if (!content && nestedParts.length === 0) return "";
+  if (/^<li[\s>]/i.test(content)) return content;
+
+  const body = [content ? stripUnsafeHtml(content) : "", ...nestedParts].filter(Boolean).join("");
+  return body ? `<li>${body}</li>` : "";
+}
+
+function listHtmlFromBlock(block: WpContentBlock): string {
+  const normalized = normalizeWpBlock(block);
+  const tag = isOrderedList(normalized.attrs) ? "ol" : "ul";
+
+  const items = (normalized.innerBlocks ?? [])
+    .map((child) => {
+      const childName = normalizeBlockName(normalizeWpBlock(child).blockName);
+      if (childName === "core/list-item") return listItemHtmlFromBlock(child);
+      return "";
+    })
+    .filter(Boolean);
+
+  if (items.length > 0) {
+    return `<${tag}>${items.join("")}</${tag}>`;
+  }
+
+  const html = stripUnsafeHtml(normalized.innerHTML ?? "");
+  if (html && /<(ul|ol)\b/i.test(html)) return html;
+
+  return "";
 }
 
 function headingFromBlock(
@@ -675,10 +853,32 @@ async function convertOneWpBlock(
       log?.(`skipped core/heading (no content in attributes or rendered)`);
       return [];
     }
-    result.push(
-      wrapModularBlock(uids.text.blockUid, headingTextFields(uids, heading.text, heading.level))
-    );
+    result.push(textBlockPayload(uids, headingTextFields(uids, heading.text, heading.level)));
     stats.text += 1;
+    return result;
+  }
+
+  if (name === "core/list") {
+    const html = listHtmlFromBlock(normalized);
+    if (!html) {
+      stats.skipped += 1;
+      log?.(`skipped core/list (no list items)`);
+      return [];
+    }
+    outPushText(uids, { text: html }, stats, result);
+    log?.(`mapped core/list as rich text (${isOrderedList(normalized.attrs) ? "ol" : "ul"})`);
+    return result;
+  }
+
+  if (name === "core/list-item") {
+    const itemHtml = listItemHtmlFromBlock(normalized);
+    if (!itemHtml) {
+      stats.skipped += 1;
+      log?.(`skipped core/list-item (no content)`);
+      return [];
+    }
+    outPushText(uids, { text: `<ul>${itemHtml}</ul>` }, stats, result);
+    log?.(`mapped standalone core/list-item as rich text list`);
     return result;
   }
 
@@ -810,11 +1010,7 @@ function outPushText(
   stats: BodyContentBuildResult["stats"],
   target: Record<string, unknown>[]
 ): void {
-  const payload: Record<string, unknown> = {};
-  if (fields.groupTitle) payload[uids.text.groupTitle] = fields.groupTitle;
-  if (fields.subhead) payload[uids.text.subhead] = fields.subhead;
-  if (fields.text) payload[uids.text.text] = fields.text;
-  if (Object.keys(payload).length === 0) return;
-  target.push(wrapModularBlock(uids.text.blockUid, payload));
+  if (!fields.groupTitle && !fields.subhead && !fields.text) return;
+  target.push(textBlockPayload(uids, fields));
   stats.text += 1;
 }

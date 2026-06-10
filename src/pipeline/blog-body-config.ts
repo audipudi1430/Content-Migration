@@ -4,13 +4,16 @@ import type { BlogReferenceShape } from "./blog-config.js";
 import { loadBlogReferenceShape } from "./blog-config.js";
 
 /**
- * Body Content global field on `blog` — Modular Blocks: Text, Image, Video/Audio.
+ * Body Content global field on `blog` — references global `modular_body`.
  *
- * CMA shape: `body_content: [{ text: {...} }, { image: { file } }, { video_audio: { video: ref } }]`
+ * CMA shape:
+ * `modular_body: { modular_blocks: [{ text: { group_title, subhead, text } }, { image: { file } }, ...] }`
  */
 export type BlogBodyBlockUids = {
-  /** Global field UID on the content type (e.g. `body_content`). */
+  /** Global field UID on the blog content type (e.g. `modular_body`). */
   fieldUid: string;
+  /** Modular blocks array UID inside the global field (e.g. `modular_blocks`). */
+  modularBlocksFieldUid: string;
   /** Max heading level for `group_title` (h3+ → `subhead`). Default 2. */
   headingGroupMaxLevel: number;
   text: {
@@ -47,7 +50,12 @@ export function loadBlogVideoRefContentTypeUid(): string {
 export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
   const headingMax = Number(process.env.BLOG_BODY_HEADING_GROUP_MAX_LEVEL ?? "2");
   return {
-    fieldUid: process.env.BLOG_FIELD_BODY_CONTENT ?? "body_content",
+    fieldUid:
+      process.env.BLOG_FIELD_BODY_CONTENT?.trim() ||
+      process.env.BLOG_FIELD_MODULAR_BODY?.trim() ||
+      "modular_body",
+    modularBlocksFieldUid:
+      process.env.BLOG_FIELD_MODULAR_BLOCKS?.trim() || "modular_blocks",
     headingGroupMaxLevel: Number.isFinite(headingMax) && headingMax > 0 ? Math.floor(headingMax) : 2,
     text: {
       blockUid: process.env.BLOG_BODY_BLOCK_TEXT ?? "text",

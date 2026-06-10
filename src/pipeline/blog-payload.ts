@@ -34,6 +34,16 @@ export function setScalar(entry: Record<string, unknown>, fieldUid: string, valu
   entry[fieldUid] = value;
 }
 
+/** Body Content global field: `{ modular_blocks: [{ text: {...} }, ...] }`. */
+export function setModularBodyField(
+  entry: Record<string, unknown>,
+  fieldUid: string,
+  globalValue: Record<string, unknown>
+): void {
+  if (!fieldUid || !globalValue || Object.keys(globalValue).length === 0) return;
+  entry[fieldUid] = globalValue;
+}
+
 /** Extract positive integer term IDs from WP REST taxonomy values (ids, objects, or strings). */
 export function pickWpTermIds(value: unknown): number[] {
   if (value === undefined || value === null) return [];
