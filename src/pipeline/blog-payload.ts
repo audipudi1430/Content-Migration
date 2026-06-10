@@ -130,7 +130,8 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   setScalar(entry, fields.url, pageUrl);
   setScalar(entry, fields.headline, cmsTitle);
   setScalar(entry, fields.subHeader, pickMetaString(meta, metaKeys.subHeader));
-  setScalar(entry, fields.shortLinkText, pickMetaString(meta, metaKeys.shortLinkText));
+  setScalar(entry, fields.shortLinkText, cmsTitle);
+  setScalar(entry, fields.dateline, new Date().toISOString());
   setScalar(entry, fields.byline, pickMetaString(meta, metaKeys.byline));
   setScalar(entry, fields.blogTopics, pickMetaString(meta, metaKeys.blogTopics));
   setScalar(entry, fields.showInNewsroomLanding, selectDefaults.showInNewsroomLanding);

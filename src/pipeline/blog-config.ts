@@ -27,6 +27,8 @@ export type BlogFieldUids = SeoSocialFieldUids & {
   headline: string;
   subHeader: string;
   shortLinkText: string;
+  /** Date and Time (`isodate`) displayed on the blog. */
+  dateline: string;
   bannerImage: string;
   /** Nested file field UID inside banner image group/global (`file` in your stack). */
   bannerImageFileField: string;
@@ -127,6 +129,7 @@ export function loadBlogFieldUids(): BlogFieldUids {
     headline: process.env.BLOG_FIELD_HEADLINE ?? "headline",
     subHeader: process.env.BLOG_FIELD_SUB_HEADER ?? "sub_header",
     shortLinkText: process.env.BLOG_FIELD_SHORT_LINK_TEXT ?? "short_link_text",
+    dateline: process.env.BLOG_FIELD_DATELINE ?? "dateline",
     bannerImage: process.env.BLOG_FIELD_BANNER_IMAGE ?? "banner_image",
     bannerImageFileField: bannerFile,
     bannerImageLayout: loadBannerImageLayout(),
