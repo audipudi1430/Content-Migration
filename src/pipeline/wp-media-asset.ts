@@ -20,20 +20,32 @@ export async function ensureWpAttachmentImageAssetUid(
   purpose: string
 ): Promise<string> {
   const mapped = map.get("asset", attachmentId);
-  if (mapped?.assetUid) return mapped.assetUid;
+  if (mapped?.assetUid && (await cs.assetExists(mapped.assetUid))) {
+    return mapped.assetUid;
+  }
+  if (mapped?.assetUid) {
+    console.error(
+      `[asset] wp_id=${attachmentId} map uid=${mapped.assetUid} not in this stack; re-migrating (${purpose})`
+    );
+  }
 
   let mediaRows = readMediaSheet(mediaSheetPath);
   let mRow = mediaRows.find((m) => m.wp_id === attachmentId);
   if (mRow?.migration_status === "Pass" && mRow.contentstack_type === "asset" && mRow.contentstack_uid) {
-    map.set({
-      wpId: attachmentId,
-      kind: "asset",
-      assetUid: mRow.contentstack_uid,
-      sourceKey: mRow.wp_slug,
-      migratedAt: new Date().toISOString(),
-      locale,
-    });
-    return mRow.contentstack_uid;
+    if (await cs.assetExists(mRow.contentstack_uid)) {
+      map.set({
+        wpId: attachmentId,
+        kind: "asset",
+        assetUid: mRow.contentstack_uid,
+        sourceKey: mRow.wp_slug,
+        migratedAt: new Date().toISOString(),
+        locale,
+      });
+      return mRow.contentstack_uid;
+    }
+    console.error(
+      `[asset] wp_id=${attachmentId} sheet uid=${mRow.contentstack_uid} not in this stack; re-migrating (${purpose})`
+    );
   }
 
   const item = await fetchWpMediaItem(wp, attachmentId);

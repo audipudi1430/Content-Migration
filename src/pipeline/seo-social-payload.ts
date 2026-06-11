@@ -120,6 +120,53 @@ export function isSeoPageUrlValidationError(message: string): boolean {
   return /seo\.page_url|page_url.*not a valid object/i.test(message);
 }
 
+export function isInvalidFileUploadError(message: string): boolean {
+  return /is not a valid upload|not a valid upload/i.test(message);
+}
+
+export type EntryFileImageFieldUids = {
+  bannerImage?: string;
+  bannerImageFileField?: string;
+  seoSocialGroup?: string;
+  metaImageGroup?: string;
+  metaImageFileField?: string;
+};
+
+/** Remove banner_image.file and seo.meta_image.file so CMA retry can succeed. */
+export function omitEntryFileImageFields(
+  payload: Record<string, unknown>,
+  fields: EntryFileImageFieldUids
+): Record<string, unknown> {
+  const copy = { ...payload };
+
+  if (fields.bannerImage && fields.bannerImageFileField) {
+    const banner = copy[fields.bannerImage];
+    if (banner && typeof banner === "object" && !Array.isArray(banner)) {
+      const next = { ...(banner as Record<string, unknown>) };
+      delete next[fields.bannerImageFileField];
+      copy[fields.bannerImage] = next;
+    } else {
+      delete copy[fields.bannerImage];
+    }
+  }
+
+  if (fields.seoSocialGroup && fields.metaImageGroup && fields.metaImageFileField) {
+    const seo = copy[fields.seoSocialGroup];
+    if (seo && typeof seo === "object" && !Array.isArray(seo)) {
+      const group = { ...(seo as Record<string, unknown>) };
+      const metaImage = group[fields.metaImageGroup];
+      if (metaImage && typeof metaImage === "object" && !Array.isArray(metaImage)) {
+        const nextMeta = { ...(metaImage as Record<string, unknown>) };
+        delete nextMeta[fields.metaImageFileField];
+        group[fields.metaImageGroup] = nextMeta;
+      }
+      copy[fields.seoSocialGroup] = group;
+    }
+  }
+
+  return copy;
+}
+
 /** Remove `page_url` from the seo global so a retry can succeed. */
 export function omitSeoPageUrlFromEntry(
   payload: Record<string, unknown>,

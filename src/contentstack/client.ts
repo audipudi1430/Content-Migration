@@ -83,6 +83,21 @@ export class ContentstackManagementClient {
     return asset;
   }
 
+  /** Returns whether an asset UID exists in this stack (404 → false). */
+  async assetExists(uid: string): Promise<boolean> {
+    const id = uid?.trim();
+    if (!id) return false;
+    const res = await fetch(`${this.base()}/assets/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders(),
+    });
+    if (res.status === 404) return false;
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Contentstack ${res.status} GET asset ${id}: ${text.slice(0, 800)}`);
+    }
+    return true;
+  }
+
   /**
    * Get asset folders. Returns all folders (fetches with high limit).
    */

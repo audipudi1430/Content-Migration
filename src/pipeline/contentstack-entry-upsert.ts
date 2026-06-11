@@ -1,7 +1,10 @@
 import type { ContentstackManagementClient } from "../contentstack/client.js";
 import {
+  isInvalidFileUploadError,
   isSeoPageUrlValidationError,
+  omitEntryFileImageFields,
   omitSeoPageUrlFromEntry,
+  type EntryFileImageFieldUids,
   type SeoLogContext,
   type SeoSocialFieldUids,
 } from "./seo-social-payload.js";
@@ -26,9 +29,10 @@ export async function upsertContentstackEntryWithSeoFallback(opts: {
   locale?: string;
   existingUid?: string;
   seoFields: Pick<SeoSocialFieldUids, "seoSocialGroup" | "seoPageUrl">;
+  fileImageFields?: EntryFileImageFieldUids;
   logContext?: SeoLogContext;
 }): Promise<UpsertEntryResult> {
-  const { cs, contentTypeUid, payload, locale, existingUid, seoFields, logContext } = opts;
+  const { cs, contentTypeUid, payload, locale, existingUid, seoFields, fileImageFields, logContext } = opts;
 
   const attempt = async (body: Record<string, unknown> & { title: string }) => {
     if (existingUid) {
@@ -44,22 +48,40 @@ export async function upsertContentstackEntryWithSeoFallback(opts: {
     return { uid };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    if (!isSeoPageUrlValidationError(msg)) {
-      throw e;
+
+    if (isSeoPageUrlValidationError(msg)) {
+      console.error(
+        `${seoLogPrefix(logContext)} WARNING: Contentstack rejected seo.page_url (${msg.slice(0, 200)}); ` +
+          `retrying without page_url`
+      );
+
+      const stripped = omitSeoPageUrlFromEntry(payload, seoFields) as Record<string, unknown> & {
+        title: string;
+      };
+      const uid = await attempt(stripped);
+      return {
+        uid,
+        warning: "seo.page_url omitted after CMA validation error (see console WARNING)",
+      };
     }
 
-    console.error(
-      `${seoLogPrefix(logContext)} WARNING: Contentstack rejected seo.page_url (${msg.slice(0, 200)}); ` +
-        `retrying without page_url`
-    );
+    if (isInvalidFileUploadError(msg) && fileImageFields) {
+      console.error(
+        `${seoLogPrefix(logContext)} WARNING: Contentstack rejected file image refs (${msg.slice(0, 200)}); ` +
+          `retrying without banner_image.file and seo.meta_image.file`
+      );
 
-    const stripped = omitSeoPageUrlFromEntry(payload, seoFields) as Record<string, unknown> & {
-      title: string;
-    };
-    const uid = await attempt(stripped);
-    return {
-      uid,
-      warning: "seo.page_url omitted after CMA validation error (see console WARNING)",
-    };
+      const stripped = omitEntryFileImageFields(payload, fileImageFields) as Record<string, unknown> & {
+        title: string;
+      };
+      const uid = await attempt(stripped);
+      return {
+        uid,
+        warning:
+          "banner_image.file and seo.meta_image.file omitted after CMA validation error (see console WARNING)",
+      };
+    }
+
+    throw e;
   }
 }

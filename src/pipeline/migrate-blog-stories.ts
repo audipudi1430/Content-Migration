@@ -481,6 +481,13 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         locale,
         existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
+        fileImageFields: {
+          bannerImage: fields.bannerImage,
+          bannerImageFileField: fields.bannerImageFileField,
+          seoSocialGroup: fields.seoSocialGroup,
+          metaImageGroup: fields.metaImageGroup,
+          metaImageFileField: fields.metaImageFileField,
+        },
         logContext: logCtx,
       });
 
