@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import * as XLSX from "xlsx";
 import { kindFromMimeType } from "./mime.js";
 import { stripHtml } from "./utils.js";
@@ -51,6 +51,7 @@ export function writeMediaSheet(path: string, rows: MediaSheetRow[]): void {
 }
 
 export function readMediaSheet(path: string): MediaSheetRow[] {
+  if (!existsSync(path)) return [];
   const wb = XLSX.read(readFileSync(path));
   const ws = wb.Sheets[MAIN_SHEET] ?? wb.Sheets[LEGACY_SHEET] ?? wb.Sheets[wb.SheetNames[0]];
   if (!ws) return [];
