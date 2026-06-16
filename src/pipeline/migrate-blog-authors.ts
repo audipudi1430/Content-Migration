@@ -22,6 +22,7 @@ import {
   setAuthorImageField,
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
+import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
@@ -376,33 +377,44 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         existingEntry,
       });
 
-      let entryUid: string;
-
-      if (updateExisting && existingUid) {
-        const updated = await cs.updateEntry(
-          contentTypeUid,
-          existingUid,
-          entryPayload as { title: string },
-          locale
-        );
-        entryUid = updated.uid ?? existingUid;
-        console.error(`[blog-author] wp_id=${tRow.wp_id} UPDATED entry ${entryUid}`);
-      } else if (updateExisting && !existingUid) {
+      if (updateExisting && !existingUid) {
         throw new Error(
           "No Contentstack entry UID in map or tracking; run migrate without --update first, or set contentstack_entry_uid on the row"
         );
-      } else {
-        const entry = await cs.createEntry(contentTypeUid, entryPayload as { title: string }, locale);
-        entryUid = entry.uid;
-        console.error(`[blog-author] wp_id=${tRow.wp_id} CREATED entry ${entryUid}`);
       }
+
+      const logCtx = { wpId: tRow.wp_id, entity: "blog-author" };
+      const { uid: entryUid, warning: upsertWarning } = await upsertContentstackEntryWithSeoFallback({
+        cs,
+        contentTypeUid,
+        payload: entryPayload as { title: string },
+        locale,
+        existingUid: updateExisting ? existingUid : undefined,
+        seoFields: fields,
+        fileImageFields: {
+          authorImage: fields.authorImage,
+          authorImageFileField: fields.authorImageFileField,
+          seoSocialGroup: fields.seoSocialGroup,
+          metaImageGroup: fields.metaImageGroup,
+          metaImageFileField: fields.metaImageFileField,
+        },
+        logContext: logCtx,
+      });
+
+      console.error(
+        `[blog-author] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
+      );
 
       const imageWarnings = warnings.join();
       if (imageWarnings) {
         console.error(`[blog-author] wp_id=${tRow.wp_id} image warnings: ${imageWarnings}`);
       }
+      if (upsertWarning) {
+        console.error(`[blog-author] wp_id=${tRow.wp_id} WARNING: ${upsertWarning}`);
+      }
       trackRef.migration_message = mergeMigrationMessages(
         imageWarnings,
+        upsertWarning,
         updateExisting ? "Updated from WordPress (--update)" : undefined
       );
 

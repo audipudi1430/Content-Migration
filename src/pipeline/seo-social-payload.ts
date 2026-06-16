@@ -121,23 +121,50 @@ export function isSeoPageUrlValidationError(message: string): boolean {
 }
 
 export function isInvalidFileUploadError(message: string): boolean {
-  return /is not a valid upload|not a valid upload/i.test(message);
+  return (
+    /is not a valid upload|not a valid upload/i.test(message) ||
+    /maximum size limit|is more than the maximum size/i.test(message)
+  );
 }
 
 export type EntryFileImageFieldUids = {
   bannerImage?: string;
   bannerImageFileField?: string;
+  authorImage?: string;
+  authorImageFileField?: string;
   seoSocialGroup?: string;
   metaImageGroup?: string;
   metaImageFileField?: string;
 };
 
-/** Remove banner_image.file and seo.meta_image.file so CMA retry can succeed. */
+/** Parse CMA JSON body embedded in `Contentstack NNN POST entry: {...}` errors. */
+export function parseCmaEntryErrorJson(message: string): { errors?: Record<string, string[]> } | undefined {
+  const idx = message.indexOf("{");
+  if (idx < 0) return undefined;
+  try {
+    return JSON.parse(message.slice(idx)) as { errors?: Record<string, string[]> };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Remove rejected file image refs so CMA retry can succeed. */
 export function omitEntryFileImageFields(
   payload: Record<string, unknown>,
   fields: EntryFileImageFieldUids
 ): Record<string, unknown> {
   const copy = { ...payload };
+
+  if (fields.authorImage && fields.authorImageFileField) {
+    const author = copy[fields.authorImage];
+    if (author && typeof author === "object" && !Array.isArray(author)) {
+      const next = { ...(author as Record<string, unknown>) };
+      delete next[fields.authorImageFileField];
+      copy[fields.authorImage] = next;
+    } else {
+      delete copy[fields.authorImage];
+    }
+  }
 
   if (fields.bannerImage && fields.bannerImageFileField) {
     const banner = copy[fields.bannerImage];

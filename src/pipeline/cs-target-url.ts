@@ -8,19 +8,26 @@ export function buildContentstackEntryTargetUrl(opts: {
   contentTypeUid: string;
   entryUid: string;
   locale?: string;
+  branch?: string;
 }): string {
+  const locale = (opts.locale || process.env.CONTENTSTACK_LOCALE || "en-us").trim() || "en-us";
+  const branch = (opts.branch || process.env.CONTENTSTACK_BRANCH || "main").trim() || "main";
   const tmpl = process.env.CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE?.trim();
   if (tmpl) {
     return applyTemplate(tmpl, {
       entry_uid: opts.entryUid,
       content_type_uid: opts.contentTypeUid,
-      locale: opts.locale ?? "",
+      locale,
       stack_api_key: opts.stackApiKey,
       api_host: opts.apiHost,
+      branch,
     });
   }
-  const base = `https://${opts.apiHost}/v3/content_types/${encodeURIComponent(opts.contentTypeUid)}/entries/${encodeURIComponent(opts.entryUid)}`;
-  return opts.locale ? `${base}?locale=${encodeURIComponent(opts.locale)}` : base;
+  return (
+    `https://app.contentstack.com/#!/stack/${opts.stackApiKey}` +
+    `/content-type/${opts.contentTypeUid}` +
+    `/${locale}/entry/${opts.entryUid}/edit?branch=${encodeURIComponent(branch)}`
+  );
 }
 
 export function buildContentstackAssetTargetUrl(opts: { apiHost: string; stackApiKey: string; assetUid: string }): string {
