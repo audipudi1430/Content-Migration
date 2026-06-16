@@ -44,6 +44,7 @@ import {
   storySlugForFetch,
 } from "./blog-story-fetch.js";
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
+import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
@@ -229,7 +230,10 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
       const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
-      const pageUrl = blogArticlePageUrlPath(slug);
+      const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrl(
+        trackRef,
+        blogArticlePageUrlPath(slug)
+      );
 
       const categoryWpIds = pickWpTermIds(story[wpTaxonomyCategory]);
       const authorWpIds = pickWpTermIds(story[wpTaxonomyAuthor]);
@@ -393,7 +397,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         );
       }
 
-      const seo = extractWpStorySeo(story, slug);
+      const seo = withMigrationPageUrl(extractWpStorySeo(story, slug), pageUrl);
       const metaDescription = resolveSeoMetaDescription(cmsTitle, seo, fields.metaDescriptionSource);
       const ogImageUrl = pickYoastOgImageUrl(story);
 
@@ -445,7 +449,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       );
 
       console.error(
-        `[blog] wp_id=${tRow.wp_id} title="${cmsTitle}" url=${pageUrl} ` +
+        `[blog] wp_id=${tRow.wp_id} title="${cmsTitle}" url=${pageUrl} (${pageUrlSource}) ` +
           `category=${categoryRefUid ?? "(none)"} author=${authorRefUid ?? "(none)"} ` +
           `body=${bodyResult.stats.source} blocks=${bodyResult.blocks.length} ` +
           `(text=${bodyResult.stats.text} image=${bodyResult.stats.image} ` +

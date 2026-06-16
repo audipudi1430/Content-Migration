@@ -32,6 +32,7 @@ export type MigrationTrackingDoc = {
   sourceSheet: string;
   rowKind: "content" | "media";
   url: string;
+  newUrl?: string;
   wpId: number;
   wpRestPath: string;
   contentTypeUid?: string;

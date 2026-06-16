@@ -7,6 +7,8 @@ export type TrackingRow = {
   source_sheet: string;
   row_kind: TrackingRowKind;
   url: string;
+  /** Target public path from source workbook (`new url` column). */
+  new_url: string;
   wp_id: number;
   /** WordPress REST collection path used when migrating this row */
   wp_rest_path: string;
@@ -43,6 +45,7 @@ export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRo
     source_sheet: partial.source_sheet,
     row_kind: partial.row_kind,
     url: partial.url,
+    new_url: partial.new_url ?? "",
     wp_id: partial.wp_id ?? 0,
     wp_rest_path: partial.wp_rest_path ?? "",
     content_type_uid: partial.content_type_uid ?? "",

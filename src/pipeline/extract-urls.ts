@@ -19,6 +19,7 @@ import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./type
 import { numberArg, stringArg } from "./args.js";
 import { trackingRowToMongoDoc } from "./tracking-sync.js";
 import { inferWpIdFromUrl, enrichTrackingRowsFromWordPress } from "./wp-extract-enrich.js";
+import { NEW_URL_COLUMN_KEYS, normalizeMigrationUrlPath } from "./migration-url.js";
 
 function normHeader(h: string): string {
   return h.replace(/^\uFEFF/, "").trim().toLowerCase().replace(/\s+/g, "_");
@@ -89,18 +90,21 @@ function parseSheetRows(
   const headerRow = matrix[0].map((c) => String(c));
   const headers = headerRow.filter(Boolean);
   const urlCol = pickColumn(headers, URL_KEYS);
+  const newUrlCol = pickColumn(headers, NEW_URL_COLUMN_KEYS);
   const idCol = pickColumn(headers, ID_KEYS);
   const colIndex = (name: string | undefined) => {
     if (!name) return -1;
     return headerRow.findIndex((c) => String(c).trim() === name);
   };
   const urlIdx = colIndex(urlCol);
+  const newUrlIdx = colIndex(newUrlCol);
   const idIdx = colIndex(idCol);
   const rows: TrackingRow[] = [];
   for (let i = 1; i < matrix.length; i++) {
     const line = matrix[i];
     if (!line || line.every((c) => !String(c).trim())) continue;
     const url = urlIdx >= 0 ? String(line[urlIdx] ?? "").trim() : "";
+    const newUrl = newUrlIdx >= 0 ? normalizeMigrationUrlPath(String(line[newUrlIdx] ?? "")) : "";
     let wpId = idIdx >= 0 ? Number(String(line[idIdx] ?? "").trim()) : NaN;
     if (!Number.isFinite(wpId) || wpId <= 0) {
       const inferred = inferWpIdFromUrl(url);
@@ -115,6 +119,7 @@ function parseSheetRows(
           source_sheet: sheetName,
           row_kind: rowKind,
           url,
+          new_url: newUrl,
           wp_id: 0,
           wp_rest_path: wpRestPath,
           content_type_uid: contentTypeUid,
@@ -131,6 +136,7 @@ function parseSheetRows(
         source_sheet: sheetName,
         row_kind: rowKind,
         url,
+        new_url: newUrl,
         wp_id: wpId,
         wp_rest_path: wpRestPath,
         content_type_uid: contentTypeUid,

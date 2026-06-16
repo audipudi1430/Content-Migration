@@ -24,6 +24,7 @@ export function trackingRowToMongoDoc(
     sourceSheet: row.source_sheet,
     rowKind: row.row_kind,
     url: row.url,
+    newUrl: row.new_url || undefined,
     wpId: row.wp_id,
     wpRestPath: row.wp_rest_path,
     contentTypeUid: row.content_type_uid || undefined,

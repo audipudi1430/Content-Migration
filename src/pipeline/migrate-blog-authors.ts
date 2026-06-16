@@ -23,6 +23,7 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -79,7 +80,8 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   const name = pickString(term.name) || `Author ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
   const fallbackUrlPath = blogAuthorPageUrlPath(slug);
-  const seo = extractWpAuthorSeo(term, fallbackUrlPath);
+  const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrl(trackRef, fallbackUrlPath);
+  const seo = withMigrationPageUrl(extractWpAuthorSeo(term, fallbackUrlPath), pageUrl);
   const meta = term.meta ?? {};
 
   const avatarId = pickPositiveInt(meta.avatar_image_id);
@@ -91,7 +93,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
 
   const authorTitle = pickString(meta.position);
   setScalar(entryPayload, fields.cmsAssetName, name);
-  setScalar(entryPayload, fields.url, seo.pageUrlPath);
+  setScalar(entryPayload, fields.url, pageUrl);
   setScalar(entryPayload, fields.authorTitle, authorTitle);
   setScalar(entryPayload, fields.authorName, name);
 
@@ -141,7 +143,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo group=${fields.seoSocialGroup} ` +
-      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} metaDesc="${metaDescription}"`
+      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} (${pageUrlSource}) metaDesc="${metaDescription}"`
   );
   console.error(
     `[blog-author] wp_id=${term.id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`

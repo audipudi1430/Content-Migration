@@ -28,6 +28,7 @@ import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
+import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -65,8 +66,8 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   const { term, fields, trackRef } = ctx;
   const name = pickString(term.name) || `Category ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
-  const pageUrl = blogCategoryPageUrlPath(slug);
-  const seo = extractWpCategorySeo(term, slug);
+  const { path: pageUrl } = resolveMigrationPageUrl(trackRef, blogCategoryPageUrlPath(slug));
+  const seo = withMigrationPageUrl(extractWpCategorySeo(term, slug), pageUrl);
   const metaDescription = resolveSeoMetaDescription(name, seo, fields.metaDescriptionSource);
   const ogImageUrl = pickYoastOgImageUrl(term);
 
