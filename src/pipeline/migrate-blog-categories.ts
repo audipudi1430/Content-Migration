@@ -27,7 +27,8 @@ import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
-import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
+import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
+import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
@@ -56,6 +57,7 @@ type BuildCategoryPayloadCtx = {
   paths: PipelinePathsConfig;
   allTracking: TrackingRow[];
   trackRef: TrackingRow;
+  warnings: MigrationWarnings;
   existingEntry?: Record<string, unknown>;
 };
 
@@ -63,7 +65,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   payload: Record<string, unknown>;
   slug: string;
 }> {
-  const { term, fields, trackRef } = ctx;
+  const { term, fields, trackRef, warnings } = ctx;
   const name = pickString(term.name) || `Category ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
   const { path: pageUrl } = resolveMigrationPageUrl(trackRef, blogCategoryPageUrlPath(slug));
@@ -90,7 +92,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   let metaImageAssetUid: string | undefined;
 
   if (ogImageUrl) {
-    const resolved = await resolveWpImageAssetFromUrl({
+    const resolved = await tryResolveWpImageAssetFromUrl({
       imageUrl: ogImageUrl,
       wp: ctx.wp,
       cs: ctx.cs,
@@ -101,6 +103,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
       purpose: `Category ${term.id} meta_image/thumbnail (yoast og_image)`,
       paths: ctx.paths,
       allTracking: ctx.allTracking,
+      warnings,
     });
     if (resolved) {
       metaImageAssetUid = resolved.assetUid;
@@ -289,6 +292,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         r.url === tRow.url
     );
     if (!trackRef) continue;
+    const warnings = new MigrationWarnings();
     try {
       const mapRecord = map.get("category", tRow.wp_id, locale);
       const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
@@ -335,6 +339,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         paths,
         allTracking,
         trackRef,
+        warnings,
         existingEntry,
       });
 
@@ -355,13 +360,17 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         logContext: logCtx,
       });
 
+      const imageWarnings = warnings.join();
+      if (imageWarnings) {
+        console.error(`[blog-category] wp_id=${tRow.wp_id} image warnings: ${imageWarnings}`);
+      }
+      trackRef.migration_message = mergeMigrationMessages(
+        imageWarnings,
+        pageUrlWarning,
+        updateExisting ? "Updated from WordPress (--update)" : undefined
+      );
       if (pageUrlWarning) {
-        trackRef.migration_message = pageUrlWarning;
         console.error(`[blog-category] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
-      } else if (updateExisting) {
-        trackRef.migration_message = "Updated from WordPress (--update)";
-      } else {
-        trackRef.migration_message = "";
       }
       console.error(
         `[blog-category] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`

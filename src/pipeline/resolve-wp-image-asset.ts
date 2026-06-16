@@ -5,6 +5,14 @@ import { WordPressClient } from "../wordpress/client.js";
 import { readMediaSheet } from "../media/sheet.js";
 import { ensureWpAttachmentImageAssetUid } from "./wp-media-asset.js";
 import type { TrackingRow } from "./types.js";
+import {
+  csAssetFileSizeBytes,
+  exceedsImageSizeLimit,
+  imageOversizedWarning,
+  loadMigrationImageMaxBytes,
+  type MigrationWarnings,
+  wpAttachmentFileSizeBytes,
+} from "./image-size-limit.js";
 
 export type ResolveAssetSource = "map" | "media_sheet" | "tracking" | "migrated_on_demand";
 
@@ -114,4 +122,70 @@ export async function resolveWpImageAssetUid(opts: {
     opts.purpose
   );
   return { assetUid: uid, source: "migrated_on_demand" };
+}
+
+export type ResolveWpImageAssetOpts = {
+  attachmentId: number;
+  wp: WordPressClient;
+  cs: ContentstackManagementClient;
+  map: MappingStore;
+  mediaSheetPath: string;
+  folderUid: string;
+  locale: string | undefined;
+  purpose: string;
+  paths: PipelinePathsConfig;
+  allTracking: TrackingRow[];
+  warnings?: MigrationWarnings;
+};
+
+async function skipIfImageTooLarge(
+  opts: Pick<ResolveWpImageAssetOpts, "wp" | "cs" | "purpose" | "warnings"> & {
+    attachmentId: number;
+    assetUid?: string;
+  }
+): Promise<boolean> {
+  const max = loadMigrationImageMaxBytes();
+  const wpSize = await wpAttachmentFileSizeBytes(opts.wp, opts.attachmentId);
+  if (wpSize !== undefined && exceedsImageSizeLimit(wpSize, max)) {
+    const msg = imageOversizedWarning(opts.purpose, opts.attachmentId, wpSize, max);
+    opts.warnings?.add(msg);
+    console.error(`[asset] WARNING: ${msg}`);
+    return true;
+  }
+  if (opts.assetUid) {
+    const csSize = await csAssetFileSizeBytes(opts.cs, opts.assetUid);
+    if (csSize !== undefined && exceedsImageSizeLimit(csSize, max)) {
+      const msg = imageOversizedWarning(opts.purpose, opts.attachmentId, csSize, max);
+      opts.warnings?.add(msg);
+      console.error(`[asset] WARNING: ${msg}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve a WP image asset UID, skipping (not throwing) when file size exceeds the limit.
+ */
+export async function tryResolveWpImageAssetUid(
+  opts: ResolveWpImageAssetOpts
+): Promise<ResolvedWpImageAsset | undefined> {
+  const { attachmentId } = opts;
+  if (attachmentId <= 0) return undefined;
+
+  if (await skipIfImageTooLarge({ ...opts, attachmentId })) {
+    return undefined;
+  }
+
+  try {
+    const resolved = await resolveWpImageAssetUid(opts);
+    if (await skipIfImageTooLarge({ ...opts, attachmentId, assetUid: resolved.assetUid })) {
+      return undefined;
+    }
+    return resolved;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[asset] wp_id=${attachmentId} ${opts.purpose} FAIL: ${msg.slice(0, 200)}`);
+    return undefined;
+  }
 }

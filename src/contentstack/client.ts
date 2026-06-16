@@ -98,6 +98,29 @@ export class ContentstackManagementClient {
     return true;
   }
 
+  /** Asset `file_size` in bytes when present on the CMA asset object. */
+  async getAssetFileSizeBytes(uid: string): Promise<number | undefined> {
+    const id = uid?.trim();
+    if (!id) return undefined;
+    const res = await fetch(`${this.base()}/assets/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) return undefined;
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text) as { asset?: { file_size?: unknown } };
+      const raw = json.asset?.file_size;
+      if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+      if (typeof raw === "string") {
+        const n = Number(raw.trim());
+        if (Number.isFinite(n) && n > 0) return Math.floor(n);
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+
   /**
    * Get asset folders. Returns all folders (fetches with high limit).
    */

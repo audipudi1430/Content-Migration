@@ -46,8 +46,9 @@ import {
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
 import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
-import { resolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
-import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
+import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
+import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { resolveWpVideoEntryUid } from "./resolve-wp-video-entry.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
@@ -181,6 +182,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
     );
     if (!trackRef) continue;
 
+    const warnings = new MigrationWarnings();
+
     try {
       const mapRecord = map.get("story", tRow.wp_id, locale);
       const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
@@ -290,7 +293,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       const featuredMediaId = pickFeaturedMediaId(story);
       if (featuredMediaId) {
-        const { assetUid, source } = await resolveWpImageAssetUid({
+        const resolved = await tryResolveWpImageAssetUid({
           attachmentId: featuredMediaId,
           wp,
           cs,
@@ -301,22 +304,26 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           purpose: `Story ${tRow.wp_id} banner_image (featured_media)`,
           paths,
           allTracking,
+          warnings,
         });
-        const existingBannerImage =
-          existingEntry?.[fields.bannerImage] &&
-          typeof existingEntry[fields.bannerImage] === "object" &&
-          !Array.isArray(existingEntry[fields.bannerImage])
-            ? (existingEntry[fields.bannerImage] as Record<string, unknown>)
-            : undefined;
-        setBannerImageField(entryPayload, fields, assetUid, existingBannerImage);
-        trackRef.featured_media_wp_id = String(featuredMediaId);
-        trackRef.contentstack_asset_uid = assetUid;
-        console.error(
-          `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
-            `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
-            `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
-            `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
-        );
+        if (resolved) {
+          const { assetUid, source } = resolved;
+          const existingBannerImage =
+            existingEntry?.[fields.bannerImage] &&
+            typeof existingEntry[fields.bannerImage] === "object" &&
+            !Array.isArray(existingEntry[fields.bannerImage])
+              ? (existingEntry[fields.bannerImage] as Record<string, unknown>)
+              : undefined;
+          setBannerImageField(entryPayload, fields, assetUid, existingBannerImage);
+          trackRef.featured_media_wp_id = String(featuredMediaId);
+          trackRef.contentstack_asset_uid = assetUid;
+          console.error(
+            `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
+              `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
+              `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+              `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
+          );
+        }
       } else {
         console.error(`[blog] wp_id=${tRow.wp_id} banner_image skipped: no featured_media`);
       }
@@ -327,7 +334,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         async ({ attachmentId, imageUrl, purpose }) => {
           try {
             if (attachmentId) {
-              const resolved = await resolveWpImageAssetUid({
+              const resolved = await tryResolveWpImageAssetUid({
                 attachmentId,
                 wp,
                 cs,
@@ -338,11 +345,12 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
                 purpose: `Story ${tRow.wp_id} ${purpose}`,
                 paths,
                 allTracking,
+                warnings,
               });
-              return resolved.assetUid;
+              return resolved?.assetUid;
             }
             if (imageUrl) {
-              const resolved = await resolveWpImageAssetFromUrl({
+              const resolved = await tryResolveWpImageAssetFromUrl({
                 imageUrl,
                 wp,
                 cs,
@@ -353,6 +361,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
                 purpose: `Story ${tRow.wp_id} ${purpose}`,
                 paths,
                 allTracking,
+                warnings,
               });
               return resolved?.assetUid;
             }
@@ -410,7 +419,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       let metaImageAssetUid: string | undefined;
       if (ogImageUrl) {
-        const resolved = await resolveWpImageAssetFromUrl({
+        const resolved = await tryResolveWpImageAssetFromUrl({
           imageUrl: ogImageUrl,
           wp,
           cs,
@@ -421,6 +430,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           purpose: `Story ${tRow.wp_id} seo.meta_image (yoast og_image)`,
           paths,
           allTracking,
+          warnings,
         });
         if (resolved) {
           metaImageAssetUid = resolved.assetUid;
@@ -495,9 +505,16 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         logContext: logCtx,
       });
 
-      if (pageUrlWarning) {
-        trackRef.migration_message = pageUrlWarning;
-        console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
+      const imageWarnings = warnings.join();
+      if (imageWarnings) {
+        console.error(`[blog] wp_id=${tRow.wp_id} image warnings: ${imageWarnings}`);
+      }
+
+      if (pageUrlWarning || imageWarnings) {
+        trackRef.migration_message = mergeMigrationMessages(imageWarnings, pageUrlWarning);
+        if (pageUrlWarning) {
+          console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
+        }
       } else if (updateExisting) {
         trackRef.migration_message = "Updated from WordPress (--update)";
       } else {
