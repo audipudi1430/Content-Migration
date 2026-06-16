@@ -23,17 +23,32 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
-import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
 type WpStoryAuthor = WpAuthorSeoSource & {
   description?: string | { rendered?: string };
+  featured_media?: number;
   yoast_head_json?: WpAuthorSeoSource["yoast_head_json"] & {
     og_image?: { url?: string }[];
   };
 };
+
+/** WP attachment id for `author_image` (meta + featured_media fallbacks). */
+function pickAuthorAvatarAttachmentId(
+  term: WpStoryAuthor,
+  meta: Record<string, unknown>
+): number | undefined {
+  return (
+    pickPositiveInt(meta.avatar_image_id) ||
+    pickPositiveInt(meta.avatar) ||
+    pickPositiveInt(meta.image_id) ||
+    pickPositiveInt(term.featured_media) ||
+    undefined
+  );
+}
 
 function pickPositiveInt(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v);
@@ -86,7 +101,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   const seo = withMigrationPageUrl(extractWpAuthorSeo(term, fallbackUrlPath), pageUrl);
   const meta = term.meta ?? {};
 
-  const avatarId = pickPositiveInt(meta.avatar_image_id);
+  const avatarId = pickAuthorAvatarAttachmentId(term, meta);
   const metaImageId = pickPositiveInt(meta.downloadable_image_id);
 
   const entryPayload: Record<string, unknown> = {
@@ -152,21 +167,19 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   );
 
   if (avatarId) {
-    const resolved = await tryResolveWpImageAssetUid({
-      attachmentId: avatarId,
-      wp: ctx.wp,
-      cs: ctx.cs,
-      map: ctx.map,
-      mediaSheetPath: ctx.mediaSheetPath,
-      folderUid: ctx.folderUid,
-      locale: ctx.locale,
-      purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
-      paths: ctx.paths,
-      allTracking: ctx.allTracking,
-      warnings,
-    });
-    if (resolved) {
-      const { assetUid, source } = resolved;
+    try {
+      const { assetUid, source } = await resolveWpImageAssetUid({
+        attachmentId: avatarId,
+        wp: ctx.wp,
+        cs: ctx.cs,
+        map: ctx.map,
+        mediaSheetPath: ctx.mediaSheetPath,
+        folderUid: ctx.folderUid,
+        locale: ctx.locale,
+        purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
+        paths: ctx.paths,
+        allTracking: ctx.allTracking,
+      });
       const existingAuthorImage =
         ctx.existingEntry?.[fields.authorImage] &&
         typeof ctx.existingEntry[fields.authorImage] === "object" &&
@@ -181,41 +194,52 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
           `fileField=${fields.authorImageFileField} assetUid=${assetUid} source=${source} ` +
           `payload=${JSON.stringify(entryPayload[fields.authorImage])}`
       );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warnings.add(`author_image: ${msg.slice(0, 300)}`);
+      console.error(`[blog-author] wp_id=${term.id} author_image FAIL: ${msg.slice(0, 200)}`);
     }
+  } else {
+    console.error(
+      `[blog-author] wp_id=${term.id} author_image skipped: no avatar attachment ` +
+        `(checked meta.avatar_image_id, meta.avatar, meta.image_id, featured_media)`
+    );
   }
 
-  if (metaImageId) {
-    const resolved = await tryResolveWpImageAssetUid({
-      attachmentId: metaImageId,
-      wp: ctx.wp,
-      cs: ctx.cs,
-      map: ctx.map,
-      mediaSheetPath: ctx.mediaSheetPath,
-      folderUid: ctx.folderUid,
-      locale: ctx.locale,
-      purpose: `Author ${term.id} meta image (meta.downloadable_image_id)`,
-      paths: ctx.paths,
-      allTracking: ctx.allTracking,
-      warnings,
-    });
-    if (resolved) {
-      const { assetUid, source } = resolved;
-    const seoGroup = entryPayload[fields.seoSocialGroup];
-    const seoObj =
-      seoGroup && typeof seoGroup === "object" && !Array.isArray(seoGroup)
-        ? (seoGroup as Record<string, unknown>)
-        : {};
-    setSeoSocialGroup(
-      entryPayload,
-      fields,
-      seo,
-      metaDescription,
-      seoObj,
-      assetUid,
-      existingMetaImageGroup,
-      { wpId: term.id, entity: "blog-author" }
-    );
-    console.error(`[blog-author] wp_id=${term.id} seo.meta_image.file=${assetUid} source=${source}`);
+  if (metaImageId && metaImageId !== avatarId) {
+    try {
+      const { assetUid, source } = await resolveWpImageAssetUid({
+        attachmentId: metaImageId,
+        wp: ctx.wp,
+        cs: ctx.cs,
+        map: ctx.map,
+        mediaSheetPath: ctx.mediaSheetPath,
+        folderUid: ctx.folderUid,
+        locale: ctx.locale,
+        purpose: `Author ${term.id} meta image (meta.downloadable_image_id)`,
+        paths: ctx.paths,
+        allTracking: ctx.allTracking,
+      });
+      const seoGroup = entryPayload[fields.seoSocialGroup];
+      const seoObj =
+        seoGroup && typeof seoGroup === "object" && !Array.isArray(seoGroup)
+          ? (seoGroup as Record<string, unknown>)
+          : {};
+      setSeoSocialGroup(
+        entryPayload,
+        fields,
+        seo,
+        metaDescription,
+        seoObj,
+        assetUid,
+        existingMetaImageGroup,
+        { wpId: term.id, entity: "blog-author" }
+      );
+      console.error(`[blog-author] wp_id=${term.id} seo.meta_image.file=${assetUid} source=${source}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      warnings.add(`seo.meta_image: ${msg.slice(0, 300)}`);
+      console.error(`[blog-author] wp_id=${term.id} seo.meta_image FAIL: ${msg.slice(0, 200)}`);
     }
   }
 
@@ -318,7 +342,13 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
 
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
-      const term = await wp.getJson<WpStoryAuthor>(rel);
+      const term = await wp.getJson<WpStoryAuthor>(rel, { context: "edit" });
+      console.error(
+        `[blog-author] wp_id=${tRow.wp_id} WP GET ${rel}?context=edit ` +
+          `avatar_image_id=${pickString(term.meta?.avatar_image_id)} ` +
+          `downloadable_image_id=${pickString(term.meta?.downloadable_image_id)} ` +
+          `featured_media=${term.featured_media ?? "(none)"}`
+      );
 
       let existingEntry: Record<string, unknown> | undefined;
       if (existingUid) {

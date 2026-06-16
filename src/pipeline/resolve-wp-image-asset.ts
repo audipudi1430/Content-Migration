@@ -168,18 +168,22 @@ async function skipIfImageTooLarge(
  * Resolve a WP image asset UID, skipping (not throwing) when file size exceeds the limit.
  */
 export async function tryResolveWpImageAssetUid(
-  opts: ResolveWpImageAssetOpts
+  opts: ResolveWpImageAssetOpts & { applySizeLimit?: boolean }
 ): Promise<ResolvedWpImageAsset | undefined> {
   const { attachmentId } = opts;
+  const applySizeLimit = opts.applySizeLimit !== false;
   if (attachmentId <= 0) return undefined;
 
-  if (await skipIfImageTooLarge({ ...opts, attachmentId })) {
+  if (applySizeLimit && (await skipIfImageTooLarge({ ...opts, attachmentId }))) {
     return undefined;
   }
 
   try {
     const resolved = await resolveWpImageAssetUid(opts);
-    if (await skipIfImageTooLarge({ ...opts, attachmentId, assetUid: resolved.assetUid })) {
+    if (
+      applySizeLimit &&
+      (await skipIfImageTooLarge({ ...opts, attachmentId, assetUid: resolved.assetUid }))
+    ) {
       return undefined;
     }
     return resolved;
