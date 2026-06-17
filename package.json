@@ -9,6 +9,7 @@
     "media:extract": "tsx src/media/cli.ts extract",
     "media:migrate": "tsx src/media/cli.ts migrate",
     "pipeline:extract": "tsx src/pipeline/cli.ts extract",
+    "pipeline:extract-content-images": "tsx src/pipeline/cli.ts extract-content-images",
     "pipeline:migrate-media": "tsx src/pipeline/cli.ts migrate-media",
     "pipeline:migrate-content": "tsx src/pipeline/cli.ts migrate-content",
     "pipeline:migrate-blog-authors": "tsx src/pipeline/cli.ts migrate-blog-authors",
