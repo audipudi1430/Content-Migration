@@ -65,9 +65,8 @@ function headingTextFields(
   text: string,
   level: number
 ): { groupTitle?: string; subhead?: string } {
-  return level <= uids.headingGroupMaxLevel
-    ? { groupTitle: text }
-    : { subhead: text };
+  const plain = plainLabelText(text);
+  return level <= uids.headingGroupMaxLevel ? { groupTitle: plain } : { subhead: plain };
 }
 
 function pickPositiveInt(v: unknown): number | undefined {
@@ -86,6 +85,11 @@ function pickString(v: unknown): string {
 
 function stripTags(html: string): string {
   return htmlToPlainWithBreaks(html);
+}
+
+/** Plain single-line label for `group_title` / `subhead` (no HTML — UI applies formatting). */
+function plainLabelText(html: string): string {
+  return stripTags(html).replace(/\s+/g, " ").trim();
 }
 
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -110,8 +114,8 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
 }): Record<string, unknown> {
   return {
     [uids.text.blockUid]: {
-      [uids.text.groupTitle]: fields.groupTitle ?? "",
-      [uids.text.subhead]: fields.subhead ?? "",
+      [uids.text.groupTitle]: fields.groupTitle ? plainLabelText(fields.groupTitle) : "",
+      [uids.text.subhead]: fields.subhead ? plainLabelText(fields.subhead) : "",
       [uids.text.text]: fields.text ?? "",
     },
   };
@@ -786,11 +790,11 @@ function headingFromBlock(
   segmentCursor?: RenderedSegmentCursor
 ): { text: string; level: number } | undefined {
   let level = pickPositiveInt(block.attrs?.level) ?? 2;
-  let text = pickString(block.attrs?.content) || stripTags(block.innerHTML ?? "");
+  let text = plainLabelText(pickString(block.attrs?.content) || (block.innerHTML ?? ""));
   if (!text && segmentCursor) {
     const seg = segmentCursor.take("heading");
     if (seg?.kind === "heading") {
-      text = stripTags(seg.html);
+      text = plainLabelText(seg.html);
       level = seg.level;
     }
   }

@@ -130,6 +130,9 @@ export function isInvalidFileUploadError(message: string): boolean {
 export type EntryFileImageFieldUids = {
   bannerImage?: string;
   bannerImageFileField?: string;
+  thumbnail?: string;
+  thumbnailImagePresetField?: string;
+  thumbnailPresetImageField?: string;
   authorImage?: string;
   authorImageFileField?: string;
   seoSocialGroup?: string;
@@ -174,6 +177,32 @@ export function omitEntryFileImageFields(
       copy[fields.bannerImage] = next;
     } else {
       delete copy[fields.bannerImage];
+    }
+  }
+
+  if (
+    fields.thumbnail &&
+    fields.thumbnailImagePresetField &&
+    fields.thumbnailPresetImageField
+  ) {
+    const thumb = copy[fields.thumbnail];
+    if (thumb && typeof thumb === "object" && !Array.isArray(thumb)) {
+      const nextThumb = { ...(thumb as Record<string, unknown>) };
+      const preset = nextThumb[fields.thumbnailImagePresetField];
+      if (preset && typeof preset === "object" && !Array.isArray(preset)) {
+        const nextPreset = { ...(preset as Record<string, unknown>) };
+        delete nextPreset[fields.thumbnailPresetImageField];
+        delete nextPreset.uid;
+        delete nextPreset.metadata;
+        delete nextPreset.extension_uid;
+        delete nextPreset._content_type_uid;
+        nextThumb[fields.thumbnailImagePresetField] = nextPreset;
+      } else {
+        delete nextThumb[fields.thumbnailImagePresetField];
+      }
+      copy[fields.thumbnail] = nextThumb;
+    } else {
+      delete copy[fields.thumbnail];
     }
   }
 

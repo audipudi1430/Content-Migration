@@ -13,6 +13,7 @@ import {
   loadBlogCategoryRefContentTypeUid,
   loadBlogContentTypeUid,
   loadBlogFieldUids,
+  loadBlogFeaturedImageTarget,
   loadBlogMetaKeys,
   loadBlogSelectDefaults,
   loadBlogSeriesMappingKind,
@@ -37,6 +38,7 @@ import {
   setBlogSeoGlobal,
   setModularBodyField,
   setScalar,
+  setThumbnailField,
 } from "./blog-payload.js";
 import {
   fetchWpStoryForMigration,
@@ -44,7 +46,7 @@ import {
   storySlugForFetch,
 } from "./blog-story-fetch.js";
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
-import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
+import { resolveMigrationPageUrl, withMigrationPageUrl, pickNewUrlFromRow } from "./migration-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
@@ -121,6 +123,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
   const bodyUids = loadBlogBodyBlockUids();
   const bodySource = loadBlogBodySource();
   const fetchBySlug = loadBlogFetchBySlug();
+  const featuredImageTarget = loadBlogFeaturedImageTarget();
 
   const cfg = loadConfig();
   const mongoCfg = loadMongoConfig();
@@ -233,10 +236,20 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
       const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
+      const fromSheetNewUrl = pickNewUrlFromRow(trackRef);
+      if (fromSheetNewUrl) {
+        trackRef.new_url = fromSheetNewUrl;
+      }
       const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrl(
         trackRef,
         blogArticlePageUrlPath(slug)
       );
+      if (!fromSheetNewUrl && pageUrlSource === "fallback") {
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} WARNING: no new_url on tracking row; ` +
+            `using fallback url=${pageUrl} (re-run pipeline:extract after adding new url column)`
+        );
+      }
 
       const categoryWpIds = pickWpTermIds(story[wpTaxonomyCategory]);
       const authorWpIds = pickWpTermIds(story[wpTaxonomyAuthor]);
@@ -301,31 +314,50 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           mediaSheetPath,
           folderUid,
           locale,
-          purpose: `Story ${tRow.wp_id} banner_image (featured_media)`,
+          purpose: `Story ${tRow.wp_id} ${featuredImageTarget} (featured_media)`,
           paths,
           allTracking,
           warnings,
         });
         if (resolved) {
           const { assetUid, source } = resolved;
-          const existingBannerImage =
-            existingEntry?.[fields.bannerImage] &&
-            typeof existingEntry[fields.bannerImage] === "object" &&
-            !Array.isArray(existingEntry[fields.bannerImage])
-              ? (existingEntry[fields.bannerImage] as Record<string, unknown>)
-              : undefined;
-          setBannerImageField(entryPayload, fields, assetUid, existingBannerImage);
+          if (featuredImageTarget === "banner_image") {
+            const existingBannerImage =
+              existingEntry?.[fields.bannerImage] &&
+              typeof existingEntry[fields.bannerImage] === "object" &&
+              !Array.isArray(existingEntry[fields.bannerImage])
+                ? (existingEntry[fields.bannerImage] as Record<string, unknown>)
+                : undefined;
+            setBannerImageField(entryPayload, fields, assetUid, existingBannerImage);
+            console.error(
+              `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
+                `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
+                `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+                `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
+            );
+          } else {
+            const existingThumbnail =
+              existingEntry?.[fields.thumbnail] &&
+              typeof existingEntry[fields.thumbnail] === "object" &&
+              !Array.isArray(existingEntry[fields.thumbnail])
+                ? (existingEntry[fields.thumbnail] as Record<string, unknown>)
+                : undefined;
+            setThumbnailField(entryPayload, fields, assetUid, existingThumbnail);
+            console.error(
+              `[blog] wp_id=${tRow.wp_id} thumbnail global=${fields.thumbnail} ` +
+                `presetField=${fields.thumbnailImagePresetField} ` +
+                `pickerField=${fields.thumbnailPresetImageField} ` +
+                `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+                `payload=${JSON.stringify(entryPayload[fields.thumbnail])}`
+            );
+          }
           trackRef.featured_media_wp_id = String(featuredMediaId);
           trackRef.contentstack_asset_uid = assetUid;
-          console.error(
-            `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
-              `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
-              `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
-              `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
-          );
         }
       } else {
-        console.error(`[blog] wp_id=${tRow.wp_id} banner_image skipped: no featured_media`);
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} ${featuredImageTarget} skipped: no featured_media`
+        );
       }
 
       const bodyResult = await buildBodyContentFromWpStory(
@@ -496,8 +528,16 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
         fileImageFields: {
-          bannerImage: fields.bannerImage,
-          bannerImageFileField: fields.bannerImageFileField,
+          ...(featuredImageTarget === "banner_image"
+            ? {
+                bannerImage: fields.bannerImage,
+                bannerImageFileField: fields.bannerImageFileField,
+              }
+            : {
+                thumbnail: fields.thumbnail,
+                thumbnailImagePresetField: fields.thumbnailImagePresetField,
+                thumbnailPresetImageField: fields.thumbnailPresetImageField,
+              }),
           seoSocialGroup: fields.seoSocialGroup,
           metaImageGroup: fields.metaImageGroup,
           metaImageFileField: fields.metaImageFileField,

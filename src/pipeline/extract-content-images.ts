@@ -193,10 +193,6 @@ async function probeUrlContentLength(url: string, authHeader?: string): Promise<
 function mediaFileSizeBytes(item: WpMediaRestItem | null | undefined): number | undefined {
   const n = item?.media_details?.filesize;
   if (typeof n === "number" && Number.isFinite(n) && n >= 0) return Math.floor(n);
-  if (typeof n === "string") {
-    const parsed = Number(n.trim());
-    if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
-  }
   return undefined;
 }
 

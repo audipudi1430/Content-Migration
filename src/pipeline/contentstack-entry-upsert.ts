@@ -69,6 +69,23 @@ function resolveAssetUidForOmitWarning(
       return pickFileRefUidFromPayload(payload, fields.bannerImage, fields.bannerImageFileField);
     }
   }
+  if (fields.thumbnail && fields.thumbnailImagePresetField) {
+    const thumbPrefix = `${fields.thumbnail}.${fields.thumbnailImagePresetField}`.toLowerCase();
+    if (norm === thumbPrefix || norm.startsWith(`${thumbPrefix}.`)) {
+      const thumb = payload[fields.thumbnail];
+      if (thumb && typeof thumb === "object" && !Array.isArray(thumb)) {
+        const preset = (thumb as Record<string, unknown>)[fields.thumbnailImagePresetField];
+        if (preset && typeof preset === "object" && !Array.isArray(preset)) {
+          const presetObj = preset as Record<string, unknown>;
+          const fromUid = pickAssetUidFromFileRef(presetObj.uid);
+          if (fromUid) return fromUid;
+          if (fields.thumbnailPresetImageField) {
+            return pickAssetUidFromFileRef(presetObj[fields.thumbnailPresetImageField]);
+          }
+        }
+      }
+    }
+  }
   if (fields.seoSocialGroup && fields.metaImageGroup) {
     const metaPath =
       `${fields.seoSocialGroup}.${fields.metaImageGroup}.${fields.metaImageFileField ?? "file"}`.toLowerCase();

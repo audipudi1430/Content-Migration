@@ -1,4 +1,4 @@
-import { pickYoastOgImageUrl } from "./blog-author-seo.js";
+import { pickYoastOgImageUrl, type WpAuthorSeoSource } from "./blog-author-seo.js";
 import {
   extractWpContentBlocks,
   normalizeWpBlock,
@@ -159,7 +159,7 @@ export function collectStoryImageRefs(story: Record<string, unknown>): ContentIm
   const featured = pickFeaturedMediaId(story);
   if (featured) pushRef(out, { attachmentId: featured });
 
-  const ogImageUrl = pickYoastOgImageUrl(story);
+  const ogImageUrl = pickYoastOgImageUrl(story as WpAuthorSeoSource);
   if (ogImageUrl) pushRef(out, { imageUrl: ogImageUrl });
 
   out.push(...collectBodyImageRefs(story));
@@ -168,7 +168,7 @@ export function collectStoryImageRefs(story: Record<string, unknown>): ContentIm
 
 export function collectCategoryImageRefs(term: Record<string, unknown>): ContentImageRef[] {
   const out: ContentImageRef[] = [];
-  const ogImageUrl = pickYoastOgImageUrl(term);
+  const ogImageUrl = pickYoastOgImageUrl(term as WpAuthorSeoSource);
   if (ogImageUrl) pushRef(out, { imageUrl: ogImageUrl });
   return out;
 }
@@ -186,7 +186,7 @@ export function collectAuthorImageRefs(term: Record<string, unknown>): ContentIm
   const metaImageId = pickPositiveInt(meta.downloadable_image_id);
   if (metaImageId) pushRef(out, { attachmentId: metaImageId });
 
-  const ogImageUrl = pickYoastOgImageUrl(term);
+  const ogImageUrl = pickYoastOgImageUrl(term as WpAuthorSeoSource);
   if (ogImageUrl) pushRef(out, { imageUrl: ogImageUrl });
 
   return out;

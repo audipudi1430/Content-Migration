@@ -33,6 +33,16 @@ export type BlogFieldUids = SeoSocialFieldUids & {
   /** Nested file field UID inside banner image group/global (`file` in your stack). */
   bannerImageFileField: string;
   bannerImageLayout: BannerImageLayout;
+  /** Thumbnail global field UID (`reference_to: image_preset`). */
+  thumbnail: string;
+  /** Nested `image_preset` global inside thumbnail (default `image`). */
+  thumbnailImagePresetField: string;
+  /** Image Preset Picker custom field inside `image_preset` (default `image`). */
+  thumbnailPresetImageField: string;
+  /** Image Preset Builder extension UID (set when stack requires full preset metadata). */
+  thumbnailPresetExtensionUid: string;
+  /** Optional default image preset UID for the picker. */
+  thumbnailPresetUid: string;
   bannerVideo: string;
   byline: string;
   blogAuthorProfile: string;
@@ -133,6 +143,13 @@ export function loadBlogFieldUids(): BlogFieldUids {
     bannerImage: process.env.BLOG_FIELD_BANNER_IMAGE ?? "banner_image",
     bannerImageFileField: bannerFile,
     bannerImageLayout: loadBannerImageLayout(),
+    thumbnail: process.env.BLOG_FIELD_THUMBNAIL ?? "thumbnail",
+    thumbnailImagePresetField:
+      process.env.BLOG_THUMBNAIL_IMAGE_PRESET_FIELD?.trim() || "image",
+    thumbnailPresetImageField:
+      process.env.BLOG_THUMBNAIL_PRESET_IMAGE_FIELD?.trim() || "image",
+    thumbnailPresetExtensionUid: process.env.BLOG_THUMBNAIL_PRESET_EXTENSION_UID?.trim() || "",
+    thumbnailPresetUid: process.env.BLOG_THUMBNAIL_PRESET_UID?.trim() || "",
     bannerVideo: process.env.BLOG_FIELD_BANNER_VIDEO ?? "banner_video",
     byline: process.env.BLOG_FIELD_BYLINE ?? "byline",
     blogAuthorProfile: process.env.BLOG_FIELD_BLOG_AUTHOR_PROFILE ?? "blog_author_profile",
@@ -184,6 +201,12 @@ export function loadBlogMetaKeys(): {
     blogTopics: process.env.BLOG_META_BLOG_TOPICS?.trim() || "",
     seriesLabel: process.env.BLOG_META_SERIES_LABEL?.trim() || "",
   };
+}
+
+/** Where WordPress `featured_media` is mapped: `thumbnail` (default) or legacy `banner_image`. */
+export function loadBlogFeaturedImageTarget(): "thumbnail" | "banner_image" {
+  const raw = (process.env.BLOG_FEATURED_IMAGE_TARGET ?? "thumbnail").toLowerCase();
+  return raw === "banner_image" || raw === "banner" ? "banner_image" : "thumbnail";
 }
 
 /** WordPress mapping kind for series_label references (default `custom`). */

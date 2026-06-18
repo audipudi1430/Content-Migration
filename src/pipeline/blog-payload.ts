@@ -1,7 +1,11 @@
 import type { BlogFieldUids, BlogReferenceShape } from "./blog-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import { pickRenderedTitle } from "./blog-author-seo.js";
-import { setAuthorImageField, type ImageGroupFieldUids } from "./blog-author-payload.js";
+import {
+  contentstackFileRefValue,
+  setAuthorImageField,
+  type ImageGroupFieldUids,
+} from "./blog-author-payload.js";
 import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
 
 export { pickRenderedTitle };
@@ -168,6 +172,67 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   }
 
   return entry;
+}
+
+function mergeRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * CMA value for Image Preset Picker inside `image_preset` global.
+ * @see https://www.contentstack.com/docs/developers/marketplace-apps/image-preset-builder
+ */
+export function buildImagePresetPickerValue(
+  assetUid: string,
+  fields: Pick<
+    BlogFieldUids,
+    "thumbnailPresetExtensionUid" | "thumbnailPresetUid" | "fileRefShape"
+  >,
+  mergePreset?: Record<string, unknown>
+): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    extension_uid: fields.thumbnailPresetExtensionUid,
+  };
+  if (fields.thumbnailPresetUid) {
+    metadata.preset = { uid: fields.thumbnailPresetUid };
+  }
+  return {
+    ...mergePreset,
+    uid: assetUid,
+    _content_type_uid: "sys_assets",
+    extension_uid: fields.thumbnailPresetExtensionUid,
+    metadata,
+  };
+}
+
+/**
+ * Thumbnail global (`image_preset` nested under `thumbnail.image`).
+ * - Simple: `thumbnail: { image: { image: "blt..." } }`
+ * - Preset picker: set `BLOG_THUMBNAIL_PRESET_EXTENSION_UID` for full metadata shape.
+ */
+export function setThumbnailField(
+  entry: Record<string, unknown>,
+  fields: BlogFieldUids,
+  assetUid: string,
+  mergeThumbnail?: Record<string, unknown>
+): void {
+  const presetField = fields.thumbnailImagePresetField;
+  const imageField = fields.thumbnailPresetImageField;
+  const mergePreset = mergeRecord(mergeThumbnail?.[presetField]);
+
+  const presetValue = fields.thumbnailPresetExtensionUid
+    ? buildImagePresetPickerValue(assetUid, fields, mergePreset)
+    : {
+        ...mergePreset,
+        [imageField]: contentstackFileRefValue(assetUid, fields.fileRefShape),
+      };
+
+  entry[fields.thumbnail] = {
+    ...mergeThumbnail,
+    [presetField]: presetValue,
+  };
 }
 
 /**
