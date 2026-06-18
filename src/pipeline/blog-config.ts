@@ -43,6 +43,8 @@ export type BlogFieldUids = SeoSocialFieldUids & {
   thumbnailPresetExtensionUid: string;
   /** Optional default image preset UID for the picker. */
   thumbnailPresetUid: string;
+  /** Optional preset display name (e.g. `Test_Preset`). */
+  thumbnailPresetName: string;
   bannerVideo: string;
   byline: string;
   blogAuthorProfile: string;
@@ -150,6 +152,7 @@ export function loadBlogFieldUids(): BlogFieldUids {
       process.env.BLOG_THUMBNAIL_PRESET_IMAGE_FIELD?.trim() || "image",
     thumbnailPresetExtensionUid: process.env.BLOG_THUMBNAIL_PRESET_EXTENSION_UID?.trim() || "",
     thumbnailPresetUid: process.env.BLOG_THUMBNAIL_PRESET_UID?.trim() || "",
+    thumbnailPresetName: process.env.BLOG_THUMBNAIL_PRESET_NAME?.trim() || "",
     bannerVideo: process.env.BLOG_FIELD_BANNER_VIDEO ?? "banner_video",
     byline: process.env.BLOG_FIELD_BYLINE ?? "byline",
     blogAuthorProfile: process.env.BLOG_FIELD_BLOG_AUTHOR_PROFILE ?? "blog_author_profile",

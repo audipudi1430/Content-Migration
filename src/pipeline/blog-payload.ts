@@ -180,6 +180,10 @@ function mergeRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+export type ThumbnailFieldOptions = {
+  focalPoint?: { x: number; y: number };
+};
+
 /**
  * CMA value for Image Preset Picker inside `image_preset` global.
  * @see https://www.contentstack.com/docs/developers/marketplace-apps/image-preset-builder
@@ -188,42 +192,65 @@ export function buildImagePresetPickerValue(
   assetUid: string,
   fields: Pick<
     BlogFieldUids,
-    "thumbnailPresetExtensionUid" | "thumbnailPresetUid" | "fileRefShape"
+    "thumbnailPresetExtensionUid" | "thumbnailPresetUid" | "thumbnailPresetName" | "fileRefShape"
   >,
-  mergePreset?: Record<string, unknown>
+  mergePreset?: Record<string, unknown>,
+  options?: ThumbnailFieldOptions
 ): Record<string, unknown> {
-  const metadata: Record<string, unknown> = {
-    extension_uid: fields.thumbnailPresetExtensionUid,
-  };
-  if (fields.thumbnailPresetUid) {
-    metadata.preset = { uid: fields.thumbnailPresetUid };
+  const presetUid = fields.thumbnailPresetUid.trim();
+  const extensionUid = fields.thumbnailPresetExtensionUid.trim();
+
+  const presetOptions: Record<string, unknown> = {};
+  if (options?.focalPoint) {
+    presetOptions["focal-point"] = {
+      x: options.focalPoint.x,
+      y: options.focalPoint.y,
+    };
   }
-  return {
+
+  const preset: Record<string, unknown> = {
+    "query-params": "",
+  };
+  if (presetUid) preset.uid = presetUid;
+  if (fields.thumbnailPresetName) preset.name = fields.thumbnailPresetName;
+  if (Object.keys(presetOptions).length > 0) preset.options = presetOptions;
+
+  const metadata: Record<string, unknown> = {
+    ...(extensionUid ? { extension_uid: extensionUid } : {}),
+    preset,
+  };
+
+  const out: Record<string, unknown> = {
     ...mergePreset,
     uid: assetUid,
     _content_type_uid: "sys_assets",
-    extension_uid: fields.thumbnailPresetExtensionUid,
     metadata,
   };
+  if (presetUid) out.lookup = presetUid;
+  if (extensionUid) out.extension_uid = extensionUid;
+  return out;
 }
 
 /**
  * Thumbnail global (`image_preset` nested under `thumbnail.image`).
- * - Simple: `thumbnail: { image: { image: "blt..." } }`
- * - Preset picker: set `BLOG_THUMBNAIL_PRESET_EXTENSION_UID` for full metadata shape.
+ * Uses Image Preset Picker metadata when extension UID and/or focal point is present.
  */
 export function setThumbnailField(
   entry: Record<string, unknown>,
   fields: BlogFieldUids,
   assetUid: string,
-  mergeThumbnail?: Record<string, unknown>
+  mergeThumbnail?: Record<string, unknown>,
+  options?: ThumbnailFieldOptions
 ): void {
   const presetField = fields.thumbnailImagePresetField;
   const imageField = fields.thumbnailPresetImageField;
   const mergePreset = mergeRecord(mergeThumbnail?.[presetField]);
 
-  const presetValue = fields.thumbnailPresetExtensionUid
-    ? buildImagePresetPickerValue(assetUid, fields, mergePreset)
+  const usePresetPicker =
+    Boolean(fields.thumbnailPresetExtensionUid.trim()) || Boolean(options?.focalPoint);
+
+  const presetValue = usePresetPicker
+    ? buildImagePresetPickerValue(assetUid, fields, mergePreset, options)
     : {
         ...mergePreset,
         [imageField]: contentstackFileRefValue(assetUid, fields.fileRefShape),
@@ -233,6 +260,28 @@ export function setThumbnailField(
     ...mergeThumbnail,
     [presetField]: presetValue,
   };
+}
+
+/** Read focal point from an existing thumbnail Image Preset Picker value (for --update merges). */
+export function pickExistingThumbnailFocalPoint(
+  existingThumbnail: Record<string, unknown> | undefined,
+  fields: Pick<BlogFieldUids, "thumbnailImagePresetField">
+): ThumbnailFieldOptions["focalPoint"] | undefined {
+  if (!existingThumbnail) return undefined;
+  const preset = existingThumbnail[fields.thumbnailImagePresetField];
+  if (!preset || typeof preset !== "object" || Array.isArray(preset)) return undefined;
+  const metadata = (preset as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return undefined;
+  const presetMeta = (metadata as Record<string, unknown>).preset;
+  if (!presetMeta || typeof presetMeta !== "object" || Array.isArray(presetMeta)) return undefined;
+  const options = (presetMeta as Record<string, unknown>).options;
+  if (!options || typeof options !== "object" || Array.isArray(options)) return undefined;
+  const fp = (options as Record<string, unknown>)["focal-point"];
+  if (!fp || typeof fp !== "object" || Array.isArray(fp)) return undefined;
+  const x = Number((fp as { x?: unknown }).x);
+  const y = Number((fp as { y?: unknown }).y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x, y };
 }
 
 /**

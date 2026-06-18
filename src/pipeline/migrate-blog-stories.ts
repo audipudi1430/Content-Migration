@@ -39,7 +39,10 @@ import {
   setModularBodyField,
   setScalar,
   setThumbnailField,
+  pickExistingThumbnailFocalPoint,
+  type ThumbnailFieldOptions,
 } from "./blog-payload.js";
+import { pickStoryThumbnailSource } from "./story-thumbnail-source.js";
 import {
   fetchWpStoryForMigration,
   loadBlogFetchBySlug,
@@ -304,17 +307,18 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         metaKeys,
       });
 
-      const featuredMediaId = pickFeaturedMediaId(story);
-      if (featuredMediaId) {
+      const thumbSource = pickStoryThumbnailSource(story);
+      const thumbnailMediaId = thumbSource?.attachmentId ?? pickFeaturedMediaId(story);
+      if (thumbnailMediaId) {
         const resolved = await tryResolveWpImageAssetUid({
-          attachmentId: featuredMediaId,
+          attachmentId: thumbnailMediaId,
           wp,
           cs,
           map,
           mediaSheetPath,
           folderUid,
           locale,
-          purpose: `Story ${tRow.wp_id} ${featuredImageTarget} (featured_media)`,
+          purpose: `Story ${tRow.wp_id} ${featuredImageTarget} (${thumbSource?.source ?? "featured_media"})`,
           paths,
           allTracking,
           warnings,
@@ -332,7 +336,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             console.error(
               `[blog] wp_id=${tRow.wp_id} banner_image group=${fields.bannerImage} ` +
                 `layout=${fields.bannerImageLayout} fileField=${fields.bannerImageFileField} ` +
-                `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+                `wp_media=${thumbnailMediaId} source=${thumbSource?.source ?? "featured_media"} ` +
+                `assetUid=${assetUid} resolve=${source} ` +
                 `payload=${JSON.stringify(entryPayload[fields.bannerImage])}`
             );
           } else {
@@ -342,21 +347,43 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
               !Array.isArray(existingEntry[fields.thumbnail])
                 ? (existingEntry[fields.thumbnail] as Record<string, unknown>)
                 : undefined;
-            setThumbnailField(entryPayload, fields, assetUid, existingThumbnail);
+            const thumbnailOptions: ThumbnailFieldOptions = {
+              focalPoint:
+                thumbSource?.focalPoint ??
+                pickExistingThumbnailFocalPoint(existingThumbnail, fields),
+            };
+            if (thumbnailOptions.focalPoint) {
+              if (!fields.thumbnailPresetExtensionUid.trim()) {
+                warnings.add(
+                  `thumbnail focal-point x=${thumbnailOptions.focalPoint.x} y=${thumbnailOptions.focalPoint.y} ` +
+                    `(from ${thumbSource?.source ?? "existing entry"}) may not apply: ` +
+                    `set BLOG_THUMBNAIL_PRESET_EXTENSION_UID`
+                );
+              }
+              if (!fields.thumbnailPresetUid.trim()) {
+                warnings.add(
+                  `thumbnail focal-point set but BLOG_THUMBNAIL_PRESET_UID is empty; ` +
+                    `preset lookup may be missing in Contentstack`
+                );
+              }
+            }
+            setThumbnailField(entryPayload, fields, assetUid, existingThumbnail, thumbnailOptions);
+            const fp = thumbnailOptions.focalPoint;
             console.error(
               `[blog] wp_id=${tRow.wp_id} thumbnail global=${fields.thumbnail} ` +
                 `presetField=${fields.thumbnailImagePresetField} ` +
-                `pickerField=${fields.thumbnailPresetImageField} ` +
-                `featured_media=${featuredMediaId} assetUid=${assetUid} source=${source} ` +
+                `wp_media=${thumbnailMediaId} block=${thumbSource?.source ?? "featured_media"} ` +
+                `focal_point=${fp ? `x=${fp.x} y=${fp.y}` : "(none)"} ` +
+                `assetUid=${assetUid} resolve=${source} ` +
                 `payload=${JSON.stringify(entryPayload[fields.thumbnail])}`
             );
           }
-          trackRef.featured_media_wp_id = String(featuredMediaId);
+          trackRef.featured_media_wp_id = String(thumbnailMediaId);
           trackRef.contentstack_asset_uid = assetUid;
         }
       } else {
         console.error(
-          `[blog] wp_id=${tRow.wp_id} ${featuredImageTarget} skipped: no featured_media`
+          `[blog] wp_id=${tRow.wp_id} ${featuredImageTarget} skipped: no hero block or featured_media`
         );
       }
 
