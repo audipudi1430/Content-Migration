@@ -12,6 +12,7 @@ import { initPipelineEnv, parseSelection, type SelectionMode } from "./args.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import type { TrackingRow } from "./types.js";
 import { buildContentstackEntryTargetUrl, buildContentstackMediaMigrationTargetUrl } from "./cs-target-url.js";
+import { categoryRowHasSheetData } from "./blog-category-sheet.js";
 
 type WpRestPost = {
   id: number;
@@ -198,7 +199,7 @@ export function selectContentRows(
   return selected.slice(opts.offset, opts.offset + opts.limit);
 }
 
-/** Category migrate: includes sheet-only rows (negative wp_id) without a WordPress term. */
+/** Category migrate: WP categories (wp_id>0) and new CS categories (wp_id=0 + sheet data). */
 export function selectCategoryContentRows(
   rows: TrackingRow[],
   sheet: string,
@@ -211,7 +212,7 @@ export function selectCategoryContentRows(
       r.row_kind === "content" &&
       r.source_sheet === sheet &&
       r.migration_status !== "NoWpId" &&
-      r.wp_id !== 0
+      (r.wp_id > 0 || categoryRowHasSheetData(r))
   );
   if (mode === "single") {
     if (opts.singleId === undefined) throw new Error("single mode requires --single-id=<wp_id>");

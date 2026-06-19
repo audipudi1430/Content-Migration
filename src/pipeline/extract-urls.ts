@@ -23,7 +23,6 @@ import {
   categoryRowHasSheetData,
   isBlogCategoryExtractTab,
   pickCategoryNameFromRowObject,
-  syntheticCategoryWpId,
 } from "./blog-category-sheet.js";
 import { NEW_URL_COLUMN_KEYS, normalizeMigrationUrlPath } from "./migration-url.js";
 
@@ -145,25 +144,13 @@ function parseSheetRows(
     const categoryName = categoryTab ? pickCategoryNameFromRowObject(rowObject) || categoryNameCell : "";
     if (!Number.isFinite(wpId) || wpId <= 0) {
       if (categoryTab && (categoryName || newUrl)) {
-        const draft = emptyTrackingRow({
-          source_sheet: sheetName,
-          row_kind: rowKind,
-          url,
-          new_url: newUrl,
-          wp_id: 0,
-          wp_rest_path: wpRestPath,
-          content_type_uid: contentTypeUid,
-          source_columns_json: sourceColumnsJson,
-          extracted_at: extractedAt,
-        });
-        wpId = syntheticCategoryWpId(draft, i);
         rows.push(
           emptyTrackingRow({
             source_sheet: sheetName,
             row_kind: rowKind,
             url,
             new_url: newUrl,
-            wp_id: wpId,
+            wp_id: 0,
             wp_rest_path: wpRestPath,
             content_type_uid: contentTypeUid,
             migration_status: "Pending",
@@ -271,23 +258,19 @@ async function enrichIncoming(
   }
 }
 
-/** Sheet-only categories (no WP term) get a stable negative wp_id so all rows can migrate. */
-function assignSheetOnlyCategoryIds(incoming: TrackingRow[]): number {
-  let assigned = 0;
-  for (let i = 0; i < incoming.length; i++) {
-    const r = incoming[i]!;
+/** Category rows with sheet data stay Pending (wp_id=0 = new CS entry, wp_id>0 = WP migrate). */
+function finalizeCategoryExtractRows(incoming: TrackingRow[]): number {
+  let updated = 0;
+  for (const r of incoming) {
     if (!isBlogCategoryExtractTab(r.content_type_uid, r.wp_rest_path, r.source_sheet)) continue;
-    if (r.wp_id > 0) continue;
-    if (r.wp_id < 0) continue;
     if (!categoryRowHasSheetData(r)) continue;
-    r.wp_id = syntheticCategoryWpId(r, i + 1);
-    r.migration_status = "Pending";
-    if (r.migration_message.startsWith("WordPress ID missing")) {
+    if (r.migration_status === "NoWpId") {
+      r.migration_status = "Pending";
       r.migration_message = "";
+      updated += 1;
     }
-    assigned += 1;
   }
-  return assigned;
+  return updated;
 }
 
 function logStillMissing(incoming: TrackingRow[], tabLabel: string): TrackingRow[] {
@@ -362,19 +345,19 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     const rows = parseSheetRows(name, matrix, kind, restForRow, ct);
     incoming.push(...rows);
     const withWp = rows.filter((r) => r.wp_id > 0).length;
-    const sheetOnly = rows.filter((r) => r.wp_id < 0).length;
+    const sheetOnly = rows.filter((r) => r.wp_id === 0).length;
     console.error(
       `[extract] Parsed tab "${name}": ${rows.length} rows (${kind}, rest=${restForRow}, ct=${ct}, ` +
-        `wp_id=${withWp}, sheet-only=${sheetOnly})`
+        `wp_id=${withWp}, pending_no_wp_id=${sheetOnly})`
     );
   }
 
   const tabLabel = tabFilter ? `tab=${tabsToProcess[0]}` : `all tabs (${tabsToProcess.length})`;
   await enrichIncoming(incoming, argv, tabLabel);
-  const sheetOnlyCategories = assignSheetOnlyCategoryIds(incoming);
-  if (sheetOnlyCategories > 0) {
+  const categoryFinalized = finalizeCategoryExtractRows(incoming);
+  if (categoryFinalized > 0) {
     console.error(
-      `[extract] ${tabLabel}: assigned sheet-only category wp_id for ${sheetOnlyCategories} row(s) (no WordPress term).`
+      `[extract] ${tabLabel}: kept ${categoryFinalized} category row(s) as Pending without WordPress id (sheet-only create).`
     );
   }
   const stillMissing = logStillMissing(incoming, tabLabel);

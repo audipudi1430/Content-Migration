@@ -1,4 +1,5 @@
-import { pickNewUrlFromRow } from "./migration-url.js";
+import { createHash } from "node:crypto";
+import { normalizeMigrationUrlPath, pickNewUrlFromRow } from "./migration-url.js";
 import type { TrackingRow } from "./types.js";
 import type { WpStoryCategory } from "./blog-category-seo.js";
 
@@ -93,29 +94,6 @@ export function isCategorySourceSheetRow(
   return isBlogCategoryExtractTab(row.content_type_uid, row.wp_rest_path, row.source_sheet);
 }
 
-function hashToNegativeInt(key: string): number {
-  let h = 2_166_136_261;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 1_677_761_9);
-  }
-  h = h | 0;
-  if (h >= 0) h = ~h;
-  if (h === 0) h = -1;
-  return h;
-}
-
-/** Stable negative wp_id for sheet-only categories (no WordPress term). */
-export function syntheticCategoryWpId(
-  row: Pick<TrackingRow, "source_sheet" | "source_columns_json" | "url" | "new_url">,
-  rowIndex?: number
-): number {
-  const sheet = parseCategorySheetColumns(row);
-  const newUrl = pickNewUrlFromRow(row);
-  const key = `${row.source_sheet}\0${rowIndex ?? ""}\0${sheet.categoryName}\0${newUrl}\0${row.url}\0${row.source_columns_json}`;
-  return hashToNegativeInt(key);
-}
-
 export function categoryRowHasSheetData(
   row: Pick<TrackingRow, "source_columns_json" | "new_url">
 ): boolean {
@@ -123,8 +101,39 @@ export function categoryRowHasSheetData(
   return Boolean(sheet.categoryName || pickNewUrlFromRow(row));
 }
 
+/** Sheet-only row: no WordPress term id (create entry from Category Name + new_url). */
 export function isSheetOnlyCategoryRow(row: Pick<TrackingRow, "wp_id">): boolean {
-  return row.wp_id < 0;
+  return row.wp_id === 0;
+}
+
+/** Unique tracking merge key segment when wp_id=0 and no source URL. */
+export function categoryRowDisambiguator(
+  row: Pick<TrackingRow, "source_columns_json" | "new_url">
+): string {
+  const newUrl = pickNewUrlFromRow(row);
+  if (newUrl) return `new:${normalizeMigrationUrlPath(newUrl)}`;
+  const name = parseCategorySheetColumns(row).categoryName;
+  if (name) {
+    const slug = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    if (slug) return `cat:${slug}`;
+  }
+  const raw = row.source_columns_json?.trim() || "";
+  const h = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return `row:${h}`;
+}
+
+/** Map key for wp_id=0 categories (new_url path or slug). */
+export function categoryMappingSourceKey(
+  row: Pick<TrackingRow, "source_columns_json" | "new_url">,
+  slug: string
+): string {
+  const newUrl = pickNewUrlFromRow(row);
+  if (newUrl) return newUrl;
+  return slug;
 }
 
 function slugifyCategoryName(name: string): string {
@@ -140,19 +149,16 @@ function slugFromMigrationPath(path: string): string {
   return segs[segs.length - 1] ?? "";
 }
 
-export function buildSheetOnlyCategoryTerm(
-  trackRef: TrackingRow,
-  wpId: number
-): WpStoryCategory {
+export function buildSheetOnlyCategoryTerm(trackRef: TrackingRow): WpStoryCategory {
   const sheet = parseCategorySheetColumns(trackRef);
-  const name = sheet.categoryName || `Category ${Math.abs(wpId)}`;
+  const name = sheet.categoryName || "Category";
   const newUrl = pickNewUrlFromRow(trackRef);
   const slug =
     slugFromMigrationPath(newUrl) ||
     slugifyCategoryName(name) ||
-    String(Math.abs(wpId));
+    "category";
   return {
-    id: wpId,
+    id: 0,
     name,
     slug,
     link: newUrl || undefined,

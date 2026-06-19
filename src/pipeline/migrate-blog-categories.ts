@@ -1,4 +1,4 @@
-import { MappingStore } from "../mapping-store.js";
+import { MappingStore, type MappingRecord } from "../mapping-store.js";
 import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
 import { ContentstackManagementClient } from "../contentstack/client.js";
 import { loadConfig } from "../config.js";
@@ -31,10 +31,12 @@ import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import {
   buildSheetOnlyCategoryTerm,
+  categoryMappingSourceKey,
   isSheetOnlyCategoryRow,
   parseCategorySheetColumns,
   trackingRowHasSourceUrl,
 } from "./blog-category-sheet.js";
+import { trackingRowMergeKey } from "./tracking-io.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -308,18 +310,25 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
   const restBaseDefault = paths.wpRestPath;
 
   for (const tRow of selected) {
-    const trackRef = allTracking.find(
-      (r) =>
-        r.row_kind === "content" &&
-        r.source_sheet === tRow.source_sheet &&
-        r.wp_id === tRow.wp_id &&
-        r.url === tRow.url
-    );
+    const tKey = trackingRowMergeKey(tRow);
+    const trackRef = allTracking.find((r) => trackingRowMergeKey(r) === tKey);
     if (!trackRef) continue;
     const warnings = new MigrationWarnings();
     try {
-      const mapRecord = map.get("category", tRow.wp_id, locale);
-      const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
+      const sheetOnly = isSheetOnlyCategoryRow(tRow);
+      let mapRecord: MappingRecord | undefined;
+      let existingUid: string | undefined;
+      let term: WpStoryCategory;
+
+      if (sheetOnly) {
+        term = buildSheetOnlyCategoryTerm(trackRef);
+        const mapKey = categoryMappingSourceKey(trackRef, term.slug);
+        mapRecord = map.get("category", 0, locale, mapKey);
+        existingUid = resolveExistingEntryUid(mapRecord, trackRef);
+      } else {
+        mapRecord = map.get("category", tRow.wp_id, locale);
+        existingUid = resolveExistingEntryUid(mapRecord, trackRef);
+      }
 
       if (!updateExisting && existingUid) {
         trackRef.contentstack_entry_uid = existingUid;
@@ -338,15 +347,13 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         continue;
       }
 
-      const restBase = (trackRef.wp_rest_path || restBaseDefault).replace(/\/$/, "");
-      const sheetOnly = isSheetOnlyCategoryRow(tRow);
-      let term: WpStoryCategory;
       if (sheetOnly) {
-        term = buildSheetOnlyCategoryTerm(trackRef, tRow.wp_id);
+        term = buildSheetOnlyCategoryTerm(trackRef);
         console.error(
-          `[blog-category] wp_id=${tRow.wp_id} sheet-only (no WordPress REST) name="${term.name}" slug=${term.slug}`
+          `[blog-category] wp_id=0 sheet-only create name="${term.name}" slug=${term.slug} new_url=${trackRef.new_url || "(none)"}`
         );
       } else {
+        const restBase = (trackRef.wp_rest_path || restBaseDefault).replace(/\/$/, "");
         const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
         term = await wp.getJson<WpStoryCategory>(rel);
       }
@@ -410,10 +417,10 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
       );
 
       map.set({
-        wpId: tRow.wp_id,
+        wpId: sheetOnly ? 0 : tRow.wp_id,
         kind: "category",
         contentstackUid: entryUid,
-        sourceKey: slug,
+        sourceKey: sheetOnly ? categoryMappingSourceKey(trackRef, slug) : slug,
         migratedAt: new Date().toISOString(),
         locale,
       });

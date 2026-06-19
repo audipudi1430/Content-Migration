@@ -101,6 +101,10 @@ export function wpRestPathForSourceTab(
   if (rowKind === "media") return "/wp-json/wp/v2/media";
   const override = paths.sheetWpRestPathByTab[tabName]?.trim();
   if (override) return override.replace(/\/$/, "");
+  const tab = tabName.trim().toLowerCase();
+  if (tab === "categories" || tab === "category" || tab.includes("categor")) {
+    return "/wp-json/wp/v2/story_category";
+  }
   return paths.wpRestPath;
 }
 
@@ -113,5 +117,13 @@ export function contentTypeUidForSourceTab(
   if (rowKind === "media") return "";
   const override = paths.sheetContentTypeUidByTab[tabName]?.trim();
   if (override) return override;
+  const tab = tabName.trim().toLowerCase();
+  if (tab === "categories" || tab === "category" || tab.includes("categor")) {
+    return (
+      process.env.CS_CONTENT_TYPE_BLOG_CATEGORY?.trim() ||
+      process.env.MIGRATION_CONTENT_TYPE_UID?.trim() ||
+      "blog_category"
+    );
+  }
   return paths.contentTypeUid;
 }

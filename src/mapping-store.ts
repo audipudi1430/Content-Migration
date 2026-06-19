@@ -43,7 +43,11 @@ export type MigrationMapFile = {
   state?: MigrationState;
 };
 
-function keyFor(kind: WpEntityKind, wpId: number, locale?: string) {
+function keyFor(kind: WpEntityKind, wpId: number, locale?: string, sourceKey?: string) {
+  if (wpId === 0 && sourceKey?.trim()) {
+    const sk = encodeURIComponent(sourceKey.trim().slice(0, 240));
+    return locale ? `${kind}:0:${sk}:${locale}` : `${kind}:0:${sk}`;
+  }
   return locale ? `${kind}:${wpId}:${locale}` : `${kind}:${wpId}`;
 }
 
@@ -92,17 +96,17 @@ export class MappingStore {
     console.error('Saved map');
   }
 
-  get(kind: WpEntityKind, wpId: number, locale?: string): MappingRecord | undefined {
-    return this.data.records[keyFor(kind, wpId, locale)];
+  get(kind: WpEntityKind, wpId: number, locale?: string, sourceKey?: string): MappingRecord | undefined {
+    return this.data.records[keyFor(kind, wpId, locale, sourceKey)];
   }
 
   set(record: MappingRecord): void {
-    const k = keyFor(record.kind, record.wpId, record.locale);
+    const k = keyFor(record.kind, record.wpId, record.locale, record.sourceKey);
     this.data.records[k] = record;
   }
 
-  has(kind: WpEntityKind, wpId: number, locale?: string): boolean {
-    return keyFor(kind, wpId, locale) in this.data.records;
+  has(kind: WpEntityKind, wpId: number, locale?: string, sourceKey?: string): boolean {
+    return keyFor(kind, wpId, locale, sourceKey) in this.data.records;
   }
 
   getMediaListOffset(): number {

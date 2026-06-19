@@ -2,6 +2,23 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import * as XLSX from "xlsx";
 import { trackingRowStableMergeKey } from "../mongo/tracking-repository.js";
 import type { TrackingRow } from "./types.js";
+import { categoryRowDisambiguator, categoryRowHasSheetData } from "./blog-category-sheet.js";
+
+export function trackingRowMergeKey(r: TrackingRow): string {
+  if (r.wp_id > 0 || r.url.trim()) {
+    return trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+  }
+  if (categoryRowHasSheetData(r)) {
+    return trackingRowStableMergeKey(
+      r.source_sheet,
+      r.row_kind,
+      0,
+      "",
+      categoryRowDisambiguator(r)
+    );
+  }
+  return trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+}
 
 function rowFromRecord(r: Record<string, unknown>): TrackingRow {
   return {
@@ -38,7 +55,7 @@ export function readTrackingSheet(path: string, sheetName: string): TrackingRow[
   const ws = wb.Sheets[sheetName];
   if (!ws) return [];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-  return rows.map(rowFromRecord).filter((r) => r.url.length > 0 || r.wp_id !== 0);
+  return rows.map(rowFromRecord).filter((r) => r.url.length > 0 || r.wp_id !== 0 || categoryRowHasSheetData(r));
 }
 
 export function writeTrackingSheet(path: string, sheetName: string, rows: TrackingRow[]): void {
@@ -54,7 +71,7 @@ export function writeTrackingSheet(path: string, sheetName: string, rows: Tracki
 }
 
 export function mergeTrackingRows(existing: TrackingRow[], incoming: TrackingRow[]): TrackingRow[] {
-  const key = (r: TrackingRow) => trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+  const key = (r: TrackingRow) => trackingRowMergeKey(r);
   const map = new Map<string, TrackingRow>();
   for (const r of existing) map.set(key(r), r);
   for (const r of incoming) {
@@ -124,8 +141,8 @@ export function readAllTrackingRowsFromWorkbook(path: string): TrackingRow[] {
     if (!ws) continue;
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" }).map(rowFromRecord);
     for (const r of rows) {
-      if (!r.url && r.wp_id === 0) continue;
-      const k = trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+      if (r.wp_id === 0 && !r.url && !categoryRowHasSheetData(r)) continue;
+      const k = trackingRowMergeKey(r);
       byKey.set(k, r);
     }
   }

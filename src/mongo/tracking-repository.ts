@@ -5,22 +5,24 @@ import type { MongoConfig } from "../config-pipeline.js";
 const MAX_URL_IN_MERGE_KEY = 400;
 
 /**
- * Stable key for the same logical source row (sheet + kind + URL).
+ * Stable key for the same logical source row (sheet + kind + URL / id / disambiguator).
  * URL is normalized; very long URLs are hashed so Excel/Mongo keys stay bounded.
- * When the sheet has no URL, falls back to `id:{wp_id}` or `noid`.
  */
 export function trackingRowStableMergeKey(
   sourceSheet: string,
   rowKind: string,
   wpId: number,
-  url: string
+  url: string,
+  disambiguator?: string
 ): string {
   let u = url.trim().replace(/\/+$/g, "").replace(/\s+/g, " ");
   if (u.length > MAX_URL_IN_MERGE_KEY) {
     u = `h:${createHash("sha256").update(u).digest("hex").slice(0, 40)}`;
   }
   if (u.length > 0) return `${sourceSheet}|${rowKind}|${u}`;
-  if (wpId !== 0) return `${sourceSheet}|${rowKind}|id:${wpId}`;
+  if (wpId > 0) return `${sourceSheet}|${rowKind}|id:${wpId}`;
+  const d = (disambiguator ?? "").trim();
+  if (d) return `${sourceSheet}|${rowKind}|${d}`;
   return `${sourceSheet}|${rowKind}|noid`;
 }
 
@@ -63,9 +65,10 @@ export function trackingDocId(
   sourceSheet: string,
   rowKind: string,
   wpId: number,
-  url?: string
+  url?: string,
+  disambiguator?: string
 ): string {
-  return `${runId}:${trackingRowStableMergeKey(sourceSheet, rowKind, wpId, url ?? "")}`;
+  return `${runId}:${trackingRowStableMergeKey(sourceSheet, rowKind, wpId, url ?? "", disambiguator)}`;
 }
 
 let sharedClient: MongoClient | undefined;

@@ -1,15 +1,17 @@
 import type { MongoConfig, PipelinePathsConfig } from "../config-pipeline.js";
-import { upsertTrackingDoc, trackingDocId, getTrackingCollection, trackingRowStableMergeKey } from "../mongo/tracking-repository.js";
+import { upsertTrackingDoc, trackingDocId, getTrackingCollection } from "../mongo/tracking-repository.js";
 import type { MigrationTrackingDoc } from "../mongo/tracking-repository.js";
 import {
   readAllTrackingRowsFromWorkbook,
   readTrackingSheet,
   writeTrackingWorkbook,
+  trackingRowMergeKey,
 } from "./tracking-io.js";
+import { categoryRowDisambiguator, categoryRowHasSheetData } from "./blog-category-sheet.js";
 import type { TrackingRow } from "./types.js";
 
 function rowKey(r: TrackingRow): string {
-  return trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
+  return trackingRowMergeKey(r);
 }
 
 export function trackingRowToMongoDoc(
@@ -18,7 +20,16 @@ export function trackingRowToMongoDoc(
   updatedAt: string
 ): MigrationTrackingDoc {
   return {
-    _id: trackingDocId(paths.runId, row.source_sheet, row.row_kind, row.wp_id || 0, row.url),
+    _id: trackingDocId(
+      paths.runId,
+      row.source_sheet,
+      row.row_kind,
+      row.wp_id || 0,
+      row.url,
+      row.wp_id === 0 && !row.url && categoryRowHasSheetData(row)
+        ? categoryRowDisambiguator(row)
+        : undefined
+    ),
     runId: paths.runId,
     envLabel: paths.envLabel,
     sourceSheet: row.source_sheet,
