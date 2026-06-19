@@ -73,7 +73,7 @@ function loadBannerImageLayout(): BannerImageLayout {
 }
 
 function loadBlogSeoPageUrlShape() {
-  return resolveSeoPageUrlShape(process.env.BLOG_SEO_PAGE_URL_SHAPE, "group");
+  return resolveSeoPageUrlShape(process.env.BLOG_SEO_PAGE_URL_SHAPE, "canonical_url_list");
 }
 
 export function loadBlogReferenceShape(): BlogReferenceShape {

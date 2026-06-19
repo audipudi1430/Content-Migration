@@ -402,11 +402,8 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
+        resolveDuplicateTitle: true,
       });
-
-      console.error(
-        `[blog-author] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
-      );
 
       const imageWarnings = warnings.join();
       if (imageWarnings) {

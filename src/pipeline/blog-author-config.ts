@@ -61,7 +61,7 @@ export type BlogAuthorFieldUids = {
 };
 
 function loadAuthorSeoPageUrlShape(): SeoPageUrlShape {
-  return resolveSeoPageUrlShape(process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE, "modular");
+  return resolveSeoPageUrlShape(process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE, "canonical_url_list");
 }
 
 export function loadBlogAuthorFileRefShape(): FileRefShape {

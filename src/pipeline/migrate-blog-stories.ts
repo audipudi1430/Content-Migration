@@ -566,6 +566,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
+        resolveDuplicateTitle: true,
       });
 
       const imageWarnings = warnings.join();
