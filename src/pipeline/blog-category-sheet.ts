@@ -101,9 +101,11 @@ export function categoryRowHasSheetData(
   return Boolean(sheet.categoryName || pickNewUrlFromRow(row));
 }
 
-/** Sheet-only row: no WordPress term id (create entry from Category Name + new_url). */
-export function isSheetOnlyCategoryRow(row: Pick<TrackingRow, "wp_id">): boolean {
-  return row.wp_id === 0;
+/** Sheet-only row: no WordPress URL (create entry from Category Name + new_url, wp_id stays 0). */
+export function isSheetOnlyCategoryRow(
+  row: Pick<TrackingRow, "wp_id" | "url">
+): boolean {
+  return row.wp_id === 0 && !trackingRowHasSourceUrl(row);
 }
 
 /** Unique tracking merge key segment when wp_id=0 and no source URL. */

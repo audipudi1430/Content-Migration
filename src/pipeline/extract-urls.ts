@@ -143,7 +143,7 @@ function parseSheetRows(
     const extractedAt = new Date().toISOString();
     const categoryName = categoryTab ? pickCategoryNameFromRowObject(rowObject) || categoryNameCell : "";
     if (!Number.isFinite(wpId) || wpId <= 0) {
-      if (categoryTab && (categoryName || newUrl)) {
+      if (categoryTab && (categoryName || newUrl || url)) {
         rows.push(
           emptyTrackingRow({
             source_sheet: sheetName,
@@ -258,12 +258,17 @@ async function enrichIncoming(
   }
 }
 
-/** Category rows with sheet data stay Pending (wp_id=0 = new CS entry, wp_id>0 = WP migrate). */
+/** Normalize legacy negative wp_id; keep category rows Pending when sheet/url data exists. */
 function finalizeCategoryExtractRows(incoming: TrackingRow[]): number {
   let updated = 0;
   for (const r of incoming) {
     if (!isBlogCategoryExtractTab(r.content_type_uid, r.wp_rest_path, r.source_sheet)) continue;
-    if (!categoryRowHasSheetData(r)) continue;
+    if (r.wp_id < 0) {
+      r.wp_id = 0;
+      updated += 1;
+    }
+    const eligible = categoryRowHasSheetData(r) || Boolean(r.url.trim());
+    if (!eligible) continue;
     if (r.migration_status === "NoWpId") {
       r.migration_status = "Pending";
       r.migration_message = "";

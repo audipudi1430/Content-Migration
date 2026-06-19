@@ -90,6 +90,74 @@ export function extractSlugFromPublicUrl(url: string): string | undefined {
   return undefined;
 }
 
+/** Slug segment after taxonomy path keywords, e.g. `/category/cloud` → `cloud`. */
+export function extractCategorySlugFromPublicUrl(url: string): string | undefined {
+  const keywords = ["story_category", "categories", "category", "product_cat", "topic"];
+  try {
+    const u = new URL(url.trim());
+    const parts = u.pathname.split("/").map((s) => decodeURIComponent(s)).filter(Boolean);
+    const lower = parts.map((p) => p.toLowerCase());
+    for (const kw of keywords) {
+      const idx = lower.indexOf(kw.toLowerCase());
+      if (idx >= 0 && idx + 1 < parts.length) {
+        const seg = parts[idx + 1]!;
+        if (["feed", "embed", "page"].includes(seg.toLowerCase())) continue;
+        if (/^\d{1,12}$/.test(seg)) continue;
+        if (seg.length > 1 && seg.length < 200) return seg;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Collect slug candidates for category REST lookup from a public URL. */
+export function collectCategorySlugCandidates(url: string): string[] {
+  const out: string[] = [];
+  const afterKw = extractCategorySlugFromPublicUrl(url);
+  if (afterKw) out.push(afterKw);
+  const q = slugFromTaxonomyQueryParams(url);
+  if (q) out.push(q);
+  const pub = extractSlugFromPublicUrl(url);
+  if (pub) out.push(pub);
+  const seen = new Set<string>();
+  return out.map((s) => s.trim()).filter((s) => s.length > 1 && s.length < 200 && !seen.has(s) && seen.add(s));
+}
+
+/**
+ * Resolve WordPress REST object id from a public URL (slug lookup, query vars, numeric tail).
+ */
+export async function resolveWordPressContentIdFromUrl(
+  wp: WordPressClient,
+  url: string,
+  restPath: string
+): Promise<number | undefined> {
+  const trimmed = url.trim();
+  if (!trimmed) return undefined;
+  const base = wpCollectionBase(restPath);
+  if (!base.includes("wp-json")) return undefined;
+
+  let id = inferWpIdFromUrl(trimmed);
+  if (id && id > 0) return id;
+
+  const isCategory = base.includes("story_category") || base.includes("/categories");
+  const candidates = isCategory
+    ? collectCategorySlugCandidates(trimmed)
+    : collectSlugCandidates(trimmed, "content");
+
+  for (const slug of candidates) {
+    id = await resolveIdBySlug(wp, base, slug);
+    if (id) return id;
+    id = await resolveIdBySearchExactSlug(wp, base, slug);
+    if (id) return id;
+  }
+
+  const n = trailingNumericPathId(trimmed);
+  if (n && (await probeExists(wp, base, n))) return n;
+  return undefined;
+}
+
 /** Slug from query string (taxonomies, CPTs, author archives). */
 function slugFromTaxonomyQueryParams(url: string): string | undefined {
   try {
@@ -282,6 +350,12 @@ function summarizeWpEntity(data: unknown): Record<string, unknown> {
         ? o.description
         : pickRenderedTitle(o.description),
   };
+  if (o.meta && typeof o.meta === "object" && !Array.isArray(o.meta)) {
+    out.meta = o.meta;
+  }
+  if (o.yoast_head_json && typeof o.yoast_head_json === "object" && !Array.isArray(o.yoast_head_json)) {
+    out.yoast_head_json = o.yoast_head_json;
+  }
   for (const k of Object.keys(out)) {
     if (out[k] === undefined || out[k] === null || out[k] === "") delete out[k];
   }
@@ -405,22 +479,7 @@ async function enrichOneTrackingRow(
 
   try {
     if (row.wp_id <= 0 && row.url.trim()) {
-      let id = inferWpIdFromUrl(row.url);
-      if (!id) {
-        const candidates = collectSlugCandidates(row.url, row.row_kind);
-        for (const slug of candidates) {
-          id = await resolveIdBySlug(wp, base, slug);
-          if (id) break;
-          if (row.row_kind === "content") {
-            id = await resolveIdBySearchExactSlug(wp, base, slug);
-            if (id) break;
-          }
-        }
-      }
-      if (!id) {
-        const n = trailingNumericPathId(row.url);
-        if (n && (await probeExists(wp, base, n))) id = n;
-      }
+      const id = await resolveWordPressContentIdFromUrl(wp, row.url, row.wp_rest_path);
       if (id && id > 0) {
         row.wp_id = id;
         row.migration_status = "Pending";

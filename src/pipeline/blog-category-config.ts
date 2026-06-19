@@ -85,7 +85,7 @@ function loadThumbnailLayout(): CategoryThumbnailLayout {
 }
 
 function loadSeoPageUrlShape() {
-  return resolveSeoPageUrlShape(process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE, "group");
+  return resolveSeoPageUrlShape(process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE, "canonical_url_list");
 }
 
 export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {

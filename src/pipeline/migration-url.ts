@@ -4,6 +4,7 @@ export const NEW_URL_COLUMN_KEYS = new Set([
   "new_url",
   "new_url_path",
   "new_path",
+  "new url",
   "destination_url",
   "contentstack_url",
   "cs_url",

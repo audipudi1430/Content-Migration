@@ -37,6 +37,7 @@ import {
   trackingRowHasSourceUrl,
 } from "./blog-category-sheet.js";
 import { trackingRowMergeKey } from "./tracking-io.js";
+import { resolveWordPressContentIdFromUrl } from "./wp-extract-enrich.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -74,7 +75,8 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
 }> {
   const { term, fields, trackRef, warnings } = ctx;
   const sheet = parseCategorySheetColumns(trackRef);
-  const useRest = !isSheetOnlyCategoryRow(trackRef) && trackingRowHasSourceUrl(trackRef);
+  const sheetOnly = isSheetOnlyCategoryRow(trackRef);
+  const useRest = !sheetOnly;
   const wpName = pickString(term.name) || `Category ${term.id}`;
   const displayName = sheet.categoryName || wpName;
   const slug = pickString(term.slug) || String(term.id);
@@ -315,18 +317,32 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
     if (!trackRef) continue;
     const warnings = new MigrationWarnings();
     try {
-      const sheetOnly = isSheetOnlyCategoryRow(tRow);
+      const restBase = (trackRef.wp_rest_path || restBaseDefault).replace(/\/$/, "");
+      let wpId = tRow.wp_id;
+
+      if (wpId <= 0 && trackingRowHasSourceUrl(trackRef)) {
+        const resolved = await resolveWordPressContentIdFromUrl(wp, trackRef.url, restBase);
+        if (resolved && resolved > 0) {
+          wpId = resolved;
+          trackRef.wp_id = resolved;
+          console.error(
+            `[blog-category] resolved wp_id=${resolved} from url=${trackRef.url} rest=${restBase}`
+          );
+        }
+      }
+
+      const sheetOnly = wpId <= 0;
       let mapRecord: MappingRecord | undefined;
       let existingUid: string | undefined;
       let term: WpStoryCategory;
 
       if (sheetOnly) {
-        term = buildSheetOnlyCategoryTerm(trackRef);
-        const mapKey = categoryMappingSourceKey(trackRef, term.slug);
+        const prelim = buildSheetOnlyCategoryTerm(trackRef);
+        const mapKey = categoryMappingSourceKey(trackRef, prelim.slug);
         mapRecord = map.get("category", 0, locale, mapKey);
         existingUid = resolveExistingEntryUid(mapRecord, trackRef);
       } else {
-        mapRecord = map.get("category", tRow.wp_id, locale);
+        mapRecord = map.get("category", wpId, locale);
         existingUid = resolveExistingEntryUid(mapRecord, trackRef);
       }
 
@@ -347,15 +363,14 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         continue;
       }
 
-      if (sheetOnly) {
+      if (!sheetOnly) {
+        const rel = `${restBase.replace(/^\//, "")}/${wpId}`;
+        term = await wp.getJson<WpStoryCategory>(rel);
+      } else {
         term = buildSheetOnlyCategoryTerm(trackRef);
         console.error(
           `[blog-category] wp_id=0 sheet-only create name="${term.name}" slug=${term.slug} new_url=${trackRef.new_url || "(none)"}`
         );
-      } else {
-        const restBase = (trackRef.wp_rest_path || restBaseDefault).replace(/\/$/, "");
-        const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
-        term = await wp.getJson<WpStoryCategory>(rel);
       }
 
       let existingEntry: Record<string, unknown> | undefined;
@@ -389,7 +404,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         );
       }
 
-      const logCtx = { wpId: tRow.wp_id, entity: "blog-category" };
+      const logCtx = { wpId: sheetOnly ? 0 : wpId, entity: "blog-category" };
       const { uid: entryUid, warning: pageUrlWarning } = await upsertContentstackEntryWithSeoFallback({
         cs,
         contentTypeUid,
@@ -417,7 +432,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
       );
 
       map.set({
-        wpId: sheetOnly ? 0 : tRow.wp_id,
+        wpId: sheetOnly ? 0 : wpId,
         kind: "category",
         contentstackUid: entryUid,
         sourceKey: sheetOnly ? categoryMappingSourceKey(trackRef, slug) : slug,

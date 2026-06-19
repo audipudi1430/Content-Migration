@@ -212,7 +212,7 @@ export function selectCategoryContentRows(
       r.row_kind === "content" &&
       r.source_sheet === sheet &&
       r.migration_status !== "NoWpId" &&
-      (r.wp_id > 0 || categoryRowHasSheetData(r))
+      (r.wp_id > 0 || categoryRowHasSheetData(r) || Boolean(r.url.trim()))
   );
   if (mode === "single") {
     if (opts.singleId === undefined) throw new Error("single mode requires --single-id=<wp_id>");
