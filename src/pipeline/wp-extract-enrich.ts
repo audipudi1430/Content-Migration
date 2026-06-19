@@ -404,6 +404,8 @@ async function enrichOneTrackingRow(
   }
 
   try {
+    if (row.wp_id < 0) return;
+
     if (row.wp_id <= 0 && row.url.trim()) {
       let id = inferWpIdFromUrl(row.url);
       if (!id) {

@@ -38,7 +38,7 @@ export function readTrackingSheet(path: string, sheetName: string): TrackingRow[
   const ws = wb.Sheets[sheetName];
   if (!ws) return [];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" });
-  return rows.map(rowFromRecord).filter((r) => r.url.length > 0 || r.wp_id > 0);
+  return rows.map(rowFromRecord).filter((r) => r.url.length > 0 || r.wp_id !== 0);
 }
 
 export function writeTrackingSheet(path: string, sheetName: string, rows: TrackingRow[]): void {
@@ -124,7 +124,7 @@ export function readAllTrackingRowsFromWorkbook(path: string): TrackingRow[] {
     if (!ws) continue;
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: "" }).map(rowFromRecord);
     for (const r of rows) {
-      if (!r.url && r.wp_id <= 0) continue;
+      if (!r.url && r.wp_id === 0) continue;
       const k = trackingRowStableMergeKey(r.source_sheet, r.row_kind, r.wp_id, r.url);
       byKey.set(k, r);
     }

@@ -72,10 +72,25 @@ export function pickCategoryNameFromRowObject(row: Record<string, string>): stri
   return pickFromRowObject(o, CATEGORY_NAME_KEYS);
 }
 
-export function isBlogCategoryExtractTab(contentTypeUid: string, wpRestPath: string): boolean {
+export function isBlogCategoryExtractTab(
+  contentTypeUid: string,
+  wpRestPath: string,
+  sourceSheet?: string
+): boolean {
   const ct = contentTypeUid.trim().toLowerCase();
   if (ct === "blog_category" || ct.endsWith("blog_category")) return true;
-  return wpRestPath.toLowerCase().includes("story_category");
+  if (ct === "story_category" || ct.endsWith("story_category")) return true;
+  if (wpRestPath.toLowerCase().includes("story_category")) return true;
+  const tab = sourceSheet?.trim().toLowerCase() ?? "";
+  if (tab === "categories" || tab === "category" || tab === "blog_categories") return true;
+  if (tab.includes("categor")) return true;
+  return false;
+}
+
+export function isCategorySourceSheetRow(
+  row: Pick<TrackingRow, "source_sheet" | "content_type_uid" | "wp_rest_path">
+): boolean {
+  return isBlogCategoryExtractTab(row.content_type_uid, row.wp_rest_path, row.source_sheet);
 }
 
 function hashToNegativeInt(key: string): number {
@@ -92,12 +107,20 @@ function hashToNegativeInt(key: string): number {
 
 /** Stable negative wp_id for sheet-only categories (no WordPress term). */
 export function syntheticCategoryWpId(
-  row: Pick<TrackingRow, "source_sheet" | "source_columns_json" | "url" | "new_url">
+  row: Pick<TrackingRow, "source_sheet" | "source_columns_json" | "url" | "new_url">,
+  rowIndex?: number
 ): number {
   const sheet = parseCategorySheetColumns(row);
   const newUrl = pickNewUrlFromRow(row);
-  const key = `${row.source_sheet}\0${sheet.categoryName}\0${newUrl}\0${row.url}\0${row.source_columns_json}`;
+  const key = `${row.source_sheet}\0${rowIndex ?? ""}\0${sheet.categoryName}\0${newUrl}\0${row.url}\0${row.source_columns_json}`;
   return hashToNegativeInt(key);
+}
+
+export function categoryRowHasSheetData(
+  row: Pick<TrackingRow, "source_columns_json" | "new_url">
+): boolean {
+  const sheet = parseCategorySheetColumns(row);
+  return Boolean(sheet.categoryName || pickNewUrlFromRow(row));
 }
 
 export function isSheetOnlyCategoryRow(row: Pick<TrackingRow, "wp_id">): boolean {

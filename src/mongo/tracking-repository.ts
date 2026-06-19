@@ -20,7 +20,7 @@ export function trackingRowStableMergeKey(
     u = `h:${createHash("sha256").update(u).digest("hex").slice(0, 40)}`;
   }
   if (u.length > 0) return `${sourceSheet}|${rowKind}|${u}`;
-  if (wpId > 0) return `${sourceSheet}|${rowKind}|id:${wpId}`;
+  if (wpId !== 0) return `${sourceSheet}|${rowKind}|id:${wpId}`;
   return `${sourceSheet}|${rowKind}|noid`;
 }
 
