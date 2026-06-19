@@ -413,6 +413,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
         logContext: logCtx,
+        resolveDuplicateTitle: true,
       });
 
       const imageWarnings = warnings.join();

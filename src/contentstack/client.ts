@@ -206,6 +206,35 @@ export class ContentstackManagementClient {
     return json.entry;
   }
 
+  /** Find entry UIDs with an exact `title` match (CMA query + client-side filter). */
+  async findEntryUidsByExactTitle(
+    contentTypeUid: string,
+    title: string,
+    locale?: string
+  ): Promise<string[]> {
+    const t = title.trim();
+    if (!t) return [];
+    const params = new URLSearchParams({
+      query: JSON.stringify({ title: t }),
+      limit: "10",
+    });
+    if (locale) params.set("locale", locale);
+    const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries?${params}`;
+    const res = await fetch(url, { headers: this.headers() });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} GET entries by title: ${text.slice(0, 800)}`);
+    }
+    const json = JSON.parse(text) as { entries?: { uid?: string; title?: string }[] };
+    const uids: string[] = [];
+    for (const e of json.entries ?? []) {
+      if (String(e.title ?? "").trim() !== t) continue;
+      const uid = e.uid?.trim();
+      if (uid) uids.push(uid);
+    }
+    return uids;
+  }
+
   /**
    * Publish a single entry. Uses CMA publish endpoint; environments/locales come from opts.
    * @see https://www.contentstack.com/docs/developers/apis/content-management-api/

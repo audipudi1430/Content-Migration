@@ -205,6 +205,14 @@ export function isSeoPageUrlValidationError(message: string): boolean {
   return /seo\.page_url|page_url.*not a valid object/i.test(message);
 }
 
+export function isTitleNotUniqueError(message: string): boolean {
+  if (/title.*is not unique|is not unique.*title/i.test(message)) return true;
+  const parsed = parseCmaEntryErrorJson(message);
+  const titleErrors = parsed?.errors?.title;
+  if (!titleErrors?.length) return false;
+  return titleErrors.some((e) => /not unique/i.test(e));
+}
+
 export function isInvalidFileUploadError(message: string): boolean {
   return (
     /is not a valid upload|not a valid upload/i.test(message) ||

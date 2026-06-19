@@ -3,6 +3,7 @@ import { formatFileSizeBytes } from "./image-size-limit.js";
 import {
   isInvalidFileUploadError,
   isSeoPageUrlValidationError,
+  isTitleNotUniqueError,
   omitEntryFileImageFields,
   omitSeoPageUrlFromEntry,
   parseCmaEntryErrorJson,
@@ -142,13 +143,29 @@ export async function upsertContentstackEntryWithSeoFallback(opts: {
   seoFields: Pick<SeoSocialFieldUids, "seoSocialGroup" | "seoPageUrl">;
   fileImageFields?: EntryFileImageFieldUids;
   logContext?: SeoLogContext;
+  /** On create, if title is not unique, find existing entry and update it instead of failing. */
+  resolveDuplicateTitle?: boolean;
 }): Promise<UpsertEntryResult> {
-  const { cs, contentTypeUid, payload, locale, existingUid, seoFields, fileImageFields, logContext } = opts;
+  const {
+    cs,
+    contentTypeUid,
+    payload,
+    locale,
+    existingUid,
+    seoFields,
+    fileImageFields,
+    logContext,
+    resolveDuplicateTitle,
+  } = opts;
 
-  const attempt = async (body: Record<string, unknown> & { title: string }) => {
-    if (existingUid) {
-      const updated = await cs.updateEntry(contentTypeUid, existingUid, body, locale);
-      return updated.uid ?? existingUid;
+  const attempt = async (
+    body: Record<string, unknown> & { title: string },
+    entryUid?: string
+  ) => {
+    const uid = entryUid ?? existingUid;
+    if (uid) {
+      const updated = await cs.updateEntry(contentTypeUid, uid, body, locale);
+      return updated.uid ?? uid;
     }
     const created = await cs.createEntry(contentTypeUid, body, locale);
     return created.uid;
@@ -159,6 +176,23 @@ export async function upsertContentstackEntryWithSeoFallback(opts: {
     return { uid };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+
+    if (resolveDuplicateTitle && !existingUid && isTitleNotUniqueError(msg)) {
+      const matches = await cs.findEntryUidsByExactTitle(contentTypeUid, payload.title, locale);
+      if (matches.length > 0) {
+        const duplicateUid = matches[0]!;
+        console.error(
+          `${seoLogPrefix(logContext)} WARNING: title "${payload.title}" is not unique; ` +
+            `updating existing entry ${duplicateUid}` +
+            (matches.length > 1 ? ` (${matches.length} matches, using first)` : "")
+        );
+        const uid = await attempt(payload, duplicateUid);
+        return {
+          uid,
+          warning: `title is not unique; updated existing entry ${duplicateUid}`,
+        };
+      }
+    }
 
     if (isSeoPageUrlValidationError(msg)) {
       console.error(
