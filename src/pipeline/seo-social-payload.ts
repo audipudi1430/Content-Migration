@@ -2,6 +2,9 @@ import type { FileRefShape } from "./blog-author-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 
+/** `seo.page_url` CMA shape for the SEO global field. */
+export type SeoPageUrlShape = "string" | "modular" | "group" | "canonical_url_list";
+
 /** Field UIDs inside the `seo` Global field (blog_author, blog_category). */
 export type SeoSocialFieldUids = {
   /** Global field UID on the content type (e.g. `seo`). */
@@ -10,11 +13,17 @@ export type SeoSocialFieldUids = {
   seoTitle: string;
   /** Page URL field (e.g. `page_url`). */
   seoPageUrl: string;
-  /** `group` = `{ url, status }`; `modular` = `[{ url, status }]`; `string` = path text. */
-  seoPageUrlShape: "string" | "modular" | "group";
+  /** `group` = `{ url, status }`; `modular` = `[{ url, status }]`; `canonical_url_list` = `{ canonical, url_list }`. */
+  seoPageUrlShape: SeoPageUrlShape;
   seoPageUrlInnerUrl: string;
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
+  /** Used when `seoPageUrlShape=canonical_url_list` (defaults match Broadcom stack). */
+  seoPageUrlCanonicalField: string;
+  seoPageUrlListField: string;
+  seoPageUrlListItemUrl: string;
+  seoPageUrlListItemStatus: string;
+  seoPageUrlListItemRedirect: string;
   /** Optional; omit from payload when empty. */
   seoCanonical: string;
   metaDescription: string;
@@ -23,6 +32,69 @@ export type SeoSocialFieldUids = {
   metaImageFileField: string;
   fileRefShape: FileRefShape;
 };
+
+export function parseSeoPageUrlShape(raw: string | undefined): SeoPageUrlShape | undefined {
+  const v = raw?.trim().toLowerCase();
+  if (!v) return undefined;
+  if (v === "modular") return "modular";
+  if (v === "string") return "string";
+  if (v === "canonical_url_list" || v === "url_list" || v === "canonical") {
+    return "canonical_url_list";
+  }
+  if (v === "group") return "group";
+  return undefined;
+}
+
+/** Resolve page_url shape: type-specific env → `MIGRATION_SEO_PAGE_URL_SHAPE` → fallback. */
+export function resolveSeoPageUrlShape(typeEnv: string | undefined, fallback: SeoPageUrlShape): SeoPageUrlShape {
+  return (
+    parseSeoPageUrlShape(typeEnv) ??
+    parseSeoPageUrlShape(process.env.MIGRATION_SEO_PAGE_URL_SHAPE) ??
+    fallback
+  );
+}
+
+/** Shared inner field UIDs for `seo.page_url` (override via `MIGRATION_SEO_PAGE_URL_*`). */
+export function loadSharedSeoPageUrlFields(): Pick<
+  SeoSocialFieldUids,
+  | "seoPageUrlInnerUrl"
+  | "seoPageUrlInnerStatus"
+  | "seoPageUrlStatusDefault"
+  | "seoPageUrlCanonicalField"
+  | "seoPageUrlListField"
+  | "seoPageUrlListItemUrl"
+  | "seoPageUrlListItemStatus"
+  | "seoPageUrlListItemRedirect"
+> {
+  return {
+    seoPageUrlInnerUrl:
+      process.env.MIGRATION_SEO_PAGE_URL_INNER_URL?.trim() ||
+      process.env.BLOG_FIELD_SEO_PAGE_URL_URL?.trim() ||
+      "url",
+    seoPageUrlInnerStatus:
+      process.env.MIGRATION_SEO_PAGE_URL_INNER_STATUS?.trim() ||
+      process.env.BLOG_FIELD_SEO_PAGE_URL_STATUS?.trim() ||
+      "status",
+    seoPageUrlStatusDefault:
+      process.env.MIGRATION_SEO_PAGE_URL_STATUS_DEFAULT?.trim() ||
+      process.env.BLOG_SEO_PAGE_URL_STATUS_DEFAULT?.trim() ||
+      "200",
+    seoPageUrlCanonicalField:
+      process.env.MIGRATION_SEO_PAGE_URL_CANONICAL_FIELD?.trim() || "canonical",
+    seoPageUrlListField: process.env.MIGRATION_SEO_PAGE_URL_LIST_FIELD?.trim() || "url_list",
+    seoPageUrlListItemUrl:
+      process.env.MIGRATION_SEO_PAGE_URL_LIST_ITEM_URL?.trim() || "url",
+    seoPageUrlListItemStatus:
+      process.env.MIGRATION_SEO_PAGE_URL_LIST_ITEM_STATUS?.trim() || "status",
+    seoPageUrlListItemRedirect:
+      process.env.MIGRATION_SEO_PAGE_URL_LIST_ITEM_REDIRECT?.trim() || "redirect",
+  };
+}
+
+function seoPageUrlStatusValue(defaultRaw: string): number | string {
+  const n = Number(defaultRaw.trim());
+  return Number.isFinite(n) ? Math.floor(n) : defaultRaw;
+}
 
 export type SeoLogContext = {
   wpId?: number;
@@ -97,8 +169,21 @@ export function setSeoSocialGroup(
   entry[fields.seoSocialGroup] = group;
 }
 
-/** CMA value for `seo.page_url` (group object vs modular block vs plain string). */
+/** CMA value for `seo.page_url` (group, modular, canonical+url_list, or plain string). */
 export function buildSeoPageUrlValue(fields: SeoSocialFieldUids, path: string): unknown {
+  if (fields.seoPageUrlShape === "canonical_url_list") {
+    const status = seoPageUrlStatusValue(fields.seoPageUrlStatusDefault);
+    return {
+      [fields.seoPageUrlCanonicalField]: path,
+      [fields.seoPageUrlListField]: [
+        {
+          [fields.seoPageUrlListItemRedirect]: "",
+          [fields.seoPageUrlListItemStatus]: status,
+          [fields.seoPageUrlListItemUrl]: path,
+        },
+      ],
+    };
+  }
   if (fields.seoPageUrlShape === "modular") {
     return [
       {

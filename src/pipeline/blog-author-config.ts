@@ -10,6 +10,9 @@
  * 6. `resolve-wp-image-asset.ts` — WP attachment id → Contentstack asset UID.
  */
 
+import type { SeoPageUrlShape } from "./seo-social-payload.js";
+import { loadSharedSeoPageUrlFields, resolveSeoPageUrlShape } from "./seo-social-payload.js";
+
 /** How the author image field is modeled on the content type. */
 export type AuthorImageLayout = "group" | "global" | "file";
 
@@ -39,10 +42,15 @@ export type BlogAuthorFieldUids = {
   seoSocialGroup: string;
   seoTitle: string;
   seoPageUrl: string;
-  seoPageUrlShape: "string" | "modular" | "group";
+  seoPageUrlShape: SeoPageUrlShape;
   seoPageUrlInnerUrl: string;
   seoPageUrlInnerStatus: string;
   seoPageUrlStatusDefault: string;
+  seoPageUrlCanonicalField: string;
+  seoPageUrlListField: string;
+  seoPageUrlListItemUrl: string;
+  seoPageUrlListItemStatus: string;
+  seoPageUrlListItemRedirect: string;
   seoCanonical: string;
   /** Plain string inside SEO & Social group (required); mapped from WP `name`. */
   metaDescription: string;
@@ -52,11 +60,8 @@ export type BlogAuthorFieldUids = {
   fileRefShape: FileRefShape;
 };
 
-function loadAuthorSeoPageUrlShape(): "string" | "modular" | "group" {
-  const raw = (process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE ?? "modular").toLowerCase();
-  if (raw === "group") return "group";
-  if (raw === "string") return "string";
-  return "modular";
+function loadAuthorSeoPageUrlShape(): SeoPageUrlShape {
+  return resolveSeoPageUrlShape(process.env.BLOG_AUTHOR_SEO_PAGE_URL_SHAPE, "modular");
 }
 
 export function loadBlogAuthorFileRefShape(): FileRefShape {
@@ -101,9 +106,7 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
       "title",
     seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadAuthorSeoPageUrlShape(),
-    seoPageUrlInnerUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_URL ?? "url",
-    seoPageUrlInnerStatus: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL_STATUS ?? "status",
-    seoPageUrlStatusDefault: process.env.BLOG_AUTHOR_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
+    ...loadSharedSeoPageUrlFields(),
     seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL?.trim() ?? "canonical",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",

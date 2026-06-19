@@ -2,6 +2,10 @@ import type { FileRefShape } from "./blog-author-config.js";
 import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
 import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { SeoSocialFieldUids } from "./seo-social-payload.js";
+import {
+  loadSharedSeoPageUrlFields,
+  resolveSeoPageUrlShape,
+} from "./seo-social-payload.js";
 
 /**
  * Blog category (`blog_category`) field UIDs and URL pattern.
@@ -17,6 +21,12 @@ export type BlogCategoryFieldUids = SeoSocialFieldUids & {
   categoryThumbnailFileField: string;
   categoryThumbnailLayout: CategoryThumbnailLayout;
   categoryNameAlias: string;
+  /** `show_url` dropdown: Yes / No from sheet `Is Page`. */
+  showUrl: string;
+  /** `category_level` from sheet `Level` (L1 → level1, etc.). */
+  categoryLevel: string;
+  /** Optional display `name` field (defaults to `blog_category_name` UID if unset). */
+  categoryName: string;
   /** Reference / modular field for child categories (optional). */
   blogSubCategories: string;
   /** `name` = category name; `wp_seo` = Yoast/meta description when present. */
@@ -74,11 +84,8 @@ function loadThumbnailLayout(): CategoryThumbnailLayout {
   return "group";
 }
 
-function loadSeoPageUrlShape(): "string" | "modular" | "group" {
-  const raw = (process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE ?? "group").toLowerCase();
-  if (raw === "modular") return "modular";
-  if (raw === "string") return "string";
-  return "group";
+function loadSeoPageUrlShape() {
+  return resolveSeoPageUrlShape(process.env.BLOG_CATEGORY_SEO_PAGE_URL_SHAPE, "group");
 }
 
 export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
@@ -93,6 +100,12 @@ export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
     categoryThumbnailFileField: thumbFile,
     categoryThumbnailLayout: loadThumbnailLayout(),
     categoryNameAlias: process.env.BLOG_CATEGORY_FIELD_CATEGORY_NAME_ALIAS ?? "category_name_alias",
+    showUrl: process.env.BLOG_CATEGORY_FIELD_SHOW_URL ?? "show_url",
+    categoryLevel: process.env.BLOG_CATEGORY_FIELD_CATEGORY_LEVEL ?? "category_level",
+    categoryName:
+      process.env.BLOG_CATEGORY_FIELD_NAME?.trim() ||
+      process.env.BLOG_CATEGORY_FIELD_BLOG_CATEGORY_NAME?.trim() ||
+      "blog_category_name",
     blogSubCategories:
       process.env.BLOG_CATEGORY_FIELD_BLOG_SUB_CATEGORIES ?? "blog_sub_category",
     seoSocialGroup: process.env.BLOG_CATEGORY_FIELD_SEO_SOCIAL_GROUP ?? "seo",
@@ -102,9 +115,7 @@ export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
       "title",
     seoPageUrl: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadSeoPageUrlShape(),
-    seoPageUrlInnerUrl: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL_URL ?? "url",
-    seoPageUrlInnerStatus: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL_STATUS ?? "status",
-    seoPageUrlStatusDefault: process.env.BLOG_CATEGORY_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
+    ...loadSharedSeoPageUrlFields(),
     seoCanonical: process.env.BLOG_CATEGORY_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_CATEGORY_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_CATEGORY_FIELD_META_IMAGE ?? "meta_image",

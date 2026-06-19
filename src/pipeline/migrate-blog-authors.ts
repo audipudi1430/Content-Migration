@@ -25,7 +25,7 @@ import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
-import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
+import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -98,7 +98,10 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   const name = pickString(term.name) || `Author ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
   const fallbackUrlPath = blogAuthorPageUrlPath(slug);
-  const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrl(trackRef, fallbackUrlPath);
+  const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
+    trackRef,
+    fallbackUrlPath
+  );
   const seo = withMigrationPageUrl(extractWpAuthorSeo(term, fallbackUrlPath), pageUrl);
   const meta = term.meta ?? {};
 

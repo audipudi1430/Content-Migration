@@ -9,6 +9,10 @@ import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
 import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { WpEntityKind } from "../mapping-store.js";
 import type { SeoSocialFieldUids } from "./seo-social-payload.js";
+import {
+  loadSharedSeoPageUrlFields,
+  resolveSeoPageUrlShape,
+} from "./seo-social-payload.js";
 
 export type BlogReferenceShape = "object" | "array";
 
@@ -68,11 +72,8 @@ function loadBannerImageLayout(): BannerImageLayout {
   return "group";
 }
 
-function loadBlogSeoPageUrlShape(): "string" | "modular" | "group" {
-  const raw = (process.env.BLOG_SEO_PAGE_URL_SHAPE ?? "group").toLowerCase();
-  if (raw === "modular") return "modular";
-  if (raw === "string") return "string";
-  return "group";
+function loadBlogSeoPageUrlShape() {
+  return resolveSeoPageUrlShape(process.env.BLOG_SEO_PAGE_URL_SHAPE, "group");
 }
 
 export function loadBlogReferenceShape(): BlogReferenceShape {
@@ -164,9 +165,7 @@ export function loadBlogFieldUids(): BlogFieldUids {
       "title",
     seoPageUrl: process.env.BLOG_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadBlogSeoPageUrlShape(),
-    seoPageUrlInnerUrl: process.env.BLOG_FIELD_SEO_PAGE_URL_URL ?? "url",
-    seoPageUrlInnerStatus: process.env.BLOG_FIELD_SEO_PAGE_URL_STATUS ?? "status",
-    seoPageUrlStatusDefault: process.env.BLOG_SEO_PAGE_URL_STATUS_DEFAULT ?? "200",
+    ...loadSharedSeoPageUrlFields(),
     seoCanonical: process.env.BLOG_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_FIELD_META_IMAGE ?? "meta_image",

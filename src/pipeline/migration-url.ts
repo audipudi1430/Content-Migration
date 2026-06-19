@@ -1,7 +1,5 @@
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import type { TrackingRow } from "./types.js";
-
-/** Source workbook column headers for the target Contentstack public path. */
 export const NEW_URL_COLUMN_KEYS = new Set([
   "new_url",
   "new_url_path",
@@ -70,6 +68,18 @@ export function resolveMigrationPageUrl(
   const fromSheet = pickNewUrlFromRow(row);
   if (fromSheet) return { path: fromSheet, source: "new_url" };
   return { path: normalizeMigrationUrlPath(fallbackPath), source: "fallback" };
+}
+
+/**
+ * Like `resolveMigrationPageUrl`, but persists `new_url` on the tracking row when read from the sheet.
+ */
+export function resolveMigrationPageUrlForRow(
+  trackRef: TrackingRow,
+  fallbackPath: string
+): { path: string; source: MigrationPageUrlSource } {
+  const fromSheet = pickNewUrlFromRow(trackRef);
+  if (fromSheet) trackRef.new_url = fromSheet;
+  return resolveMigrationPageUrl(trackRef, fallbackPath);
 }
 
 export function withMigrationPageUrl(seo: WpAuthorSeoData, pageUrlPath: string): WpAuthorSeoData {

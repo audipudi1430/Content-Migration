@@ -12,7 +12,6 @@ import {
   loadBlogCategoryFieldUids,
   type BlogCategoryFieldUids,
 } from "./blog-category-config.js";
-import { resolveSeoMetaDescription } from "./blog-author-seo.js";
 import {
   extractWpCategorySeo,
   pickYoastOgImageUrl,
@@ -29,7 +28,11 @@ import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
-import { resolveMigrationPageUrl, withMigrationPageUrl } from "./migration-url.js";
+import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
+import {
+  parseCategorySheetColumns,
+  trackingRowHasSourceUrl,
+} from "./blog-category-sheet.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -66,21 +69,40 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   slug: string;
 }> {
   const { term, fields, trackRef, warnings } = ctx;
-  const name = pickString(term.name) || `Category ${term.id}`;
+  const sheet = parseCategorySheetColumns(trackRef);
+  const useRest = trackingRowHasSourceUrl(trackRef);
+  const wpName = pickString(term.name) || `Category ${term.id}`;
+  const displayName = sheet.categoryName || wpName;
   const slug = pickString(term.slug) || String(term.id);
-  const { path: pageUrl } = resolveMigrationPageUrl(trackRef, blogCategoryPageUrlPath(slug));
+  const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
+    trackRef,
+    blogCategoryPageUrlPath(slug)
+  );
   const seo = withMigrationPageUrl(extractWpCategorySeo(term, slug), pageUrl);
-  const metaDescription = resolveSeoMetaDescription(name, seo, fields.metaDescriptionSource);
-  const ogImageUrl = pickYoastOgImageUrl(term);
+  seo.seoTitleTag = displayName;
+  const metaDescription = displayName;
+  const ogImageUrl = useRest ? pickYoastOgImageUrl(term) : "";
 
   const entryPayload: Record<string, unknown> = {
-    title: name,
+    title: displayName,
   };
 
-  setScalar(entryPayload, fields.cmsAssetName, name);
+  setScalar(entryPayload, fields.cmsAssetName, displayName);
   setScalar(entryPayload, fields.url, pageUrl);
-  setScalar(entryPayload, fields.blogCategoryName, name);
-  setScalar(entryPayload, fields.categoryNameAlias, name);
+  setScalar(entryPayload, fields.blogCategoryName, displayName);
+  setScalar(entryPayload, fields.categoryNameAlias, displayName);
+  setScalar(entryPayload, fields.categoryName, displayName);
+  setScalar(entryPayload, fields.showUrl, sheet.showUrl);
+  if (sheet.categoryLevel) {
+    setScalar(entryPayload, fields.categoryLevel, sheet.categoryLevel);
+  }
+
+  console.error(
+    `[blog-category] wp_id=${term.id} sheet name="${sheet.categoryName || "(none)"}" ` +
+      `displayName="${displayName}" show_url=${sheet.showUrl} ` +
+      `level=${sheet.categoryLevel || sheet.levelRaw || "(none)"} ` +
+      `rest=${useRest ? "yes" : "no"} pageUrl=${pageUrl} (${pageUrlSource})`
+  );
 
   const existingSeoSocial =
     ctx.existingEntry?.[fields.seoSocialGroup] &&
@@ -146,7 +168,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
 
   console.error(
     `[blog-category] wp_id=${term.id} seo global=${fields.seoSocialGroup} ` +
-      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} ` +
+      `title=${seo.seoTitleTag} page_url=${seo.pageUrlPath} (${pageUrlSource}) ` +
       `metaDescSource=${fields.metaDescriptionSource} metaDesc="${metaDescription}" ` +
       `meta_image.file=${metaImageAssetUid ?? "(none)"}`
   );

@@ -49,7 +49,7 @@ import {
   storySlugForFetch,
 } from "./blog-story-fetch.js";
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
-import { resolveMigrationPageUrl, withMigrationPageUrl, pickNewUrlFromRow } from "./migration-url.js";
+import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
@@ -239,15 +239,11 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
       const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
-      const fromSheetNewUrl = pickNewUrlFromRow(trackRef);
-      if (fromSheetNewUrl) {
-        trackRef.new_url = fromSheetNewUrl;
-      }
-      const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrl(
+      const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
         trackRef,
         blogArticlePageUrlPath(slug)
       );
-      if (!fromSheetNewUrl && pageUrlSource === "fallback") {
+      if (pageUrlSource === "fallback") {
         console.error(
           `[blog] wp_id=${tRow.wp_id} WARNING: no new_url on tracking row; ` +
             `using fallback url=${pageUrl} (re-run pipeline:extract after adding new url column)`
