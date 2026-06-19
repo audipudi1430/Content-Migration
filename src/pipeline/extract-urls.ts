@@ -19,6 +19,10 @@ import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./type
 import { numberArg, stringArg } from "./args.js";
 import { trackingRowToMongoDoc } from "./tracking-sync.js";
 import { inferWpIdFromUrl, enrichTrackingRowsFromWordPress } from "./wp-extract-enrich.js";
+import {
+  isBlogCategoryExtractTab,
+  syntheticCategoryWpId,
+} from "./blog-category-sheet.js";
 import { NEW_URL_COLUMN_KEYS, normalizeMigrationUrlPath } from "./migration-url.js";
 
 function normHeader(h: string): string {
@@ -211,6 +215,22 @@ async function enrichIncoming(
   }
 }
 
+/** Sheet-only categories (no WP term) get a stable negative wp_id so all rows can migrate. */
+function assignSheetOnlyCategoryIds(incoming: TrackingRow[]): number {
+  let assigned = 0;
+  for (const r of incoming) {
+    if (!isBlogCategoryExtractTab(r.content_type_uid, r.wp_rest_path)) continue;
+    if (r.wp_id > 0) continue;
+    r.wp_id = syntheticCategoryWpId(r);
+    r.migration_status = "Pending";
+    if (r.migration_message.startsWith("WordPress ID missing")) {
+      r.migration_message = "";
+    }
+    assigned += 1;
+  }
+  return assigned;
+}
+
 function logStillMissing(incoming: TrackingRow[], tabLabel: string): TrackingRow[] {
   const stillMissing = incoming.filter((r) => r.wp_id <= 0 && r.url.trim());
   for (const r of stillMissing) {
@@ -287,6 +307,12 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
 
   const tabLabel = tabFilter ? `tab=${tabsToProcess[0]}` : `all tabs (${tabsToProcess.length})`;
   await enrichIncoming(incoming, argv, tabLabel);
+  const sheetOnlyCategories = assignSheetOnlyCategoryIds(incoming);
+  if (sheetOnlyCategories > 0) {
+    console.error(
+      `[extract] ${tabLabel}: assigned sheet-only category wp_id for ${sheetOnlyCategories} row(s) (no WordPress term).`
+    );
+  }
   const stillMissing = logStillMissing(incoming, tabLabel);
 
   const existing = readAllTrackingRowsFromWorkbook(paths.trackingWorkbook);

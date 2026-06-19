@@ -23,13 +23,15 @@ import {
   setCategoryThumbnailField,
 } from "./blog-category-payload.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
-import { selectContentRows } from "./migrate-from-tracking.js";
+import { selectCategoryContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import {
+  buildSheetOnlyCategoryTerm,
+  isSheetOnlyCategoryRow,
   parseCategorySheetColumns,
   trackingRowHasSourceUrl,
 } from "./blog-category-sheet.js";
@@ -70,7 +72,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
 }> {
   const { term, fields, trackRef, warnings } = ctx;
   const sheet = parseCategorySheetColumns(trackRef);
-  const useRest = trackingRowHasSourceUrl(trackRef);
+  const useRest = !isSheetOnlyCategoryRow(trackRef) && trackingRowHasSourceUrl(trackRef);
   const wpName = pickString(term.name) || `Category ${term.id}`;
   const displayName = sheet.categoryName || wpName;
   const slug = pickString(term.slug) || String(term.id);
@@ -288,7 +290,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
   }
 
   const allTracking = loadAllTracking(paths);
-  const selected = selectContentRows(
+  const selected = selectCategoryContentRows(
     allTracking,
     paths.migrateStartSheet,
     sel.mode as SelectionMode,
@@ -337,8 +339,17 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
       }
 
       const restBase = (trackRef.wp_rest_path || restBaseDefault).replace(/\/$/, "");
-      const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
-      const term = await wp.getJson<WpStoryCategory>(rel);
+      const sheetOnly = isSheetOnlyCategoryRow(tRow);
+      let term: WpStoryCategory;
+      if (sheetOnly) {
+        term = buildSheetOnlyCategoryTerm(trackRef, tRow.wp_id);
+        console.error(
+          `[blog-category] wp_id=${tRow.wp_id} sheet-only (no WordPress REST) name="${term.name}" slug=${term.slug}`
+        );
+      } else {
+        const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
+        term = await wp.getJson<WpStoryCategory>(rel);
+      }
 
       let existingEntry: Record<string, unknown> | undefined;
       if (existingUid) {

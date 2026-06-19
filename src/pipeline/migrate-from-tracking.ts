@@ -198,6 +198,43 @@ export function selectContentRows(
   return selected.slice(opts.offset, opts.offset + opts.limit);
 }
 
+/** Category migrate: includes sheet-only rows (negative wp_id) without a WordPress term. */
+export function selectCategoryContentRows(
+  rows: TrackingRow[],
+  sheet: string,
+  mode: SelectionMode,
+  opts: { singleId?: number; ids: number[]; offset: number; limit: number },
+  updateExisting = false
+): TrackingRow[] {
+  let selected = rows.filter(
+    (r) =>
+      r.row_kind === "content" &&
+      r.source_sheet === sheet &&
+      r.migration_status !== "NoWpId" &&
+      r.wp_id !== 0
+  );
+  if (mode === "single") {
+    if (opts.singleId === undefined) throw new Error("single mode requires --single-id=<wp_id>");
+    selected = selected.filter((r) => r.wp_id === opts.singleId);
+  } else if (mode === "ids") {
+    if (opts.ids.length === 0) throw new Error("ids mode requires --ids=1,2,3");
+    const set = new Set(opts.ids);
+    selected = selected.filter((r) => set.has(r.wp_id));
+  } else if (mode === "failed") {
+    selected = selected.filter((r) => r.migration_status === "Fail");
+  } else if (updateExisting) {
+    selected = selected.filter(
+      (r) =>
+        r.migration_status === "Pass" ||
+        r.migration_status === "Pending" ||
+        r.migration_status === "Fail"
+    );
+  } else {
+    selected = selected.filter((r) => r.migration_status === "Pending" || r.migration_status === "Fail");
+  }
+  return selected.slice(opts.offset, opts.offset + opts.limit);
+}
+
 export async function runMigrateContentFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "CONTENT_TRACK");
