@@ -366,7 +366,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             setThumbnailField(entryPayload, fields, assetUid, existingThumbnail, thumbnailOptions);
             const fp = thumbnailOptions.focalPoint;
             console.error(
-              `[blog] wp_id=${tRow.wp_id} thumbnail global=${fields.thumbnail} ` +
+              `[blog] wp_id=${tRow.wp_id} article_image global=${fields.thumbnail} ` +
                 `presetField=${fields.thumbnailImagePresetField} ` +
                 `wp_media=${thumbnailMediaId} block=${thumbSource?.source ?? "featured_media"} ` +
                 `focal_point=${fp ? `x=${fp.x} y=${fp.y}` : "(none)"} ` +

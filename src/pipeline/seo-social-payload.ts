@@ -147,6 +147,8 @@ export function setSeoSocialGroup(
   logContext?: SeoLogContext
 ): void {
   const group: Record<string, unknown> = { ...mergeGroup };
+  // Always replace page_url (do not merge/append url_list from existing entries on --update).
+  delete group[fields.seoPageUrl];
 
   group[fields.metaDescription] = metaDescription;
 

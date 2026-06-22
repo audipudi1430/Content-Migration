@@ -37,7 +37,7 @@ export type BlogFieldUids = SeoSocialFieldUids & {
   /** Nested file field UID inside banner image group/global (`file` in your stack). */
   bannerImageFileField: string;
   bannerImageLayout: BannerImageLayout;
-  /** Thumbnail global field UID (`reference_to: image_preset`). */
+  /** Article image global (`image_preset` nested under `article_image.image`). Was `thumbnail`. */
   thumbnail: string;
   /** Nested `image_preset` global inside thumbnail (default `image`). */
   thumbnailImagePresetField: string;
@@ -146,7 +146,10 @@ export function loadBlogFieldUids(): BlogFieldUids {
     bannerImage: process.env.BLOG_FIELD_BANNER_IMAGE ?? "banner_image",
     bannerImageFileField: bannerFile,
     bannerImageLayout: loadBannerImageLayout(),
-    thumbnail: process.env.BLOG_FIELD_THUMBNAIL ?? "thumbnail",
+    thumbnail:
+      process.env.BLOG_FIELD_ARTICLE_IMAGE?.trim() ||
+      process.env.BLOG_FIELD_THUMBNAIL?.trim() ||
+      "article_image",
     thumbnailImagePresetField:
       process.env.BLOG_THUMBNAIL_IMAGE_PRESET_FIELD?.trim() || "image",
     thumbnailPresetImageField:
@@ -205,7 +208,7 @@ export function loadBlogMetaKeys(): {
   };
 }
 
-/** Where WordPress `featured_media` is mapped: `thumbnail` (default) or legacy `banner_image`. */
+/** Where WordPress `featured_media` is mapped: `article_image` field (default) or legacy `banner_image`. */
 export function loadBlogFeaturedImageTarget(): "thumbnail" | "banner_image" {
   const raw = (process.env.BLOG_FEATURED_IMAGE_TARGET ?? "thumbnail").toLowerCase();
   return raw === "banner_image" || raw === "banner" ? "banner_image" : "thumbnail";

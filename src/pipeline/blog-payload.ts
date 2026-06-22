@@ -232,7 +232,7 @@ export function buildImagePresetPickerValue(
 }
 
 /**
- * Thumbnail global (`image_preset` nested under `thumbnail.image`).
+ * Article image global (`image_preset` nested under `article_image.image`).
  * Uses Image Preset Picker metadata when extension UID and/or focal point is present.
  */
 export function setThumbnailField(
