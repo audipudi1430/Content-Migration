@@ -46,10 +46,10 @@ export function loadBlogVideoRefContentTypeUid(): string {
   return process.env.BLOG_BODY_VIDEO_REF_CONTENT_TYPE?.trim() || process.env.CS_CONTENT_TYPE_VIDEO?.trim() || "video";
 }
 
-/** Single-reference field inside `video_audio` modular block (default `object`). */
+/** Modular video block reference (default `array` to match Broadcom stack). */
 export function loadBlogVideoReferenceShape(): BlogReferenceShape {
-  const raw = (process.env.BLOG_BODY_VIDEO_REFERENCE_SHAPE ?? "object").toLowerCase();
-  return raw === "array" ? "array" : "object";
+  const raw = (process.env.BLOG_BODY_VIDEO_REFERENCE_SHAPE ?? "array").toLowerCase();
+  return raw === "object" ? "object" : "array";
 }
 
 export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
@@ -73,7 +73,7 @@ export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
       file: process.env.BLOG_BODY_IMAGE_FILE ?? "file",
     },
     videoAudio: {
-      blockUid: process.env.BLOG_BODY_BLOCK_VIDEO_AUDIO ?? "video_audio",
+      blockUid: process.env.BLOG_BODY_BLOCK_VIDEO_AUDIO ?? "video",
       video: process.env.BLOG_BODY_VIDEO_FIELD ?? "video",
       refContentTypeUid: loadBlogVideoRefContentTypeUid(),
       referenceShape: loadBlogVideoReferenceShape(),

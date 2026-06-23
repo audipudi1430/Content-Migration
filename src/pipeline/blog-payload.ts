@@ -2,7 +2,6 @@ import type { BlogFieldUids, BlogReferenceShape } from "./blog-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import { pickRenderedTitle } from "./blog-author-seo.js";
 import {
-  contentstackAssetRefValue,
   setAuthorImageField,
   type ImageGroupFieldUids,
 } from "./blog-author-payload.js";
@@ -213,12 +212,13 @@ export function buildImagePresetPickerValue(
     };
   }
 
-  const preset: Record<string, unknown> = {
-    "query-params": "",
-  };
-  if (presetUid) preset.uid = presetUid;
-  if (fields.thumbnailPresetName) preset.name = fields.thumbnailPresetName;
-  if (Object.keys(presetOptions).length > 0) preset.options = presetOptions;
+  const preset: Record<string, unknown> = {};
+  if (presetUid || fields.thumbnailPresetName || Object.keys(presetOptions).length > 0) {
+    preset["query-params"] = "";
+    if (presetUid) preset.uid = presetUid;
+    if (fields.thumbnailPresetName) preset.name = fields.thumbnailPresetName;
+    if (Object.keys(presetOptions).length > 0) preset.options = presetOptions;
+  }
 
   const metadata: Record<string, unknown> = {
     ...(extensionUid ? { extension_uid: extensionUid } : {}),
@@ -238,7 +238,7 @@ export function buildImagePresetPickerValue(
 
 /**
  * Article image global (`image_preset` nested under `article_image.image`).
- * Uses Image Preset Picker metadata when extension UID and/or focal point is present.
+ * Always uses Image Preset Picker shape: `{ uid, _content_type_uid, metadata }`.
  */
 export function setThumbnailField(
   entry: Record<string, unknown>,
@@ -248,20 +248,18 @@ export function setThumbnailField(
   options?: ThumbnailFieldOptions
 ): void {
   const presetField = fields.thumbnailImagePresetField;
-  const imageField = fields.thumbnailPresetImageField;
   const mergePreset = mergeRecord(mergeThumbnail?.[presetField]);
+  const mergeWithoutAsset =
+    mergePreset && typeof mergePreset === "object"
+      ? Object.fromEntries(Object.entries(mergePreset).filter(([k]) => k !== "asset"))
+      : undefined;
 
-  const usePresetPicker =
-    Boolean(fields.thumbnailPresetExtensionUid.trim()) || Boolean(options?.focalPoint);
-
-  const presetValue = usePresetPicker
-    ? buildImagePresetPickerValue(assetUid, fields, mergePreset, options)
-    : presetField === imageField
-      ? contentstackAssetRefValue(assetUid, "object")
-      : {
-          ...mergePreset,
-          [imageField]: contentstackAssetRefValue(assetUid, fields.fileRefShape),
-        };
+  const presetValue = buildImagePresetPickerValue(
+    assetUid,
+    fields,
+    mergeWithoutAsset,
+    options
+  );
 
   entry[fields.thumbnail] = {
     ...mergeThumbnail,

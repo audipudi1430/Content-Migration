@@ -67,7 +67,8 @@ function headingTextFields(
   level: number
 ): { groupTitle?: string; subhead?: string } {
   const plain = plainLabelText(text);
-  return level <= uids.headingGroupMaxLevel ? { groupTitle: plain } : { subhead: plain };
+  const subheadHtml = subheadHtmlValue(text);
+  return level <= uids.headingGroupMaxLevel ? { groupTitle: plain } : { subhead: subheadHtml };
 }
 
 function pickPositiveInt(v: unknown): number | undefined {
@@ -88,9 +89,14 @@ function stripTags(html: string): string {
   return htmlToPlainWithBreaks(html);
 }
 
-/** Plain single-line label for `group_title` / `subhead` (no HTML — UI applies formatting). */
+/** Plain single-line label for `group_title` (no HTML — UI applies formatting). */
 function plainLabelText(html: string): string {
   return stripTags(html).replace(/\s+/g, " ").trim();
+}
+
+/** `subhead` keeps safe inline HTML (`<em>`, `<strong>`, etc.) like Contentstack prod entries. */
+function subheadHtmlValue(html: string): string {
+  return stripUnsafeHtml(html).replace(/\s+/g, " ").trim();
 }
 
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -116,7 +122,7 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
   return {
     [uids.text.blockUid]: {
       [uids.text.groupTitle]: fields.groupTitle ? plainLabelText(fields.groupTitle) : "",
-      [uids.text.subhead]: fields.subhead ? plainLabelText(fields.subhead) : "",
+      [uids.text.subhead]: fields.subhead ? subheadHtmlValue(fields.subhead) : "",
       [uids.text.text]: fields.text ?? "",
     },
   };
@@ -791,11 +797,11 @@ function headingFromBlock(
   segmentCursor?: RenderedSegmentCursor
 ): { text: string; level: number } | undefined {
   let level = pickPositiveInt(block.attrs?.level) ?? 2;
-  let text = plainLabelText(pickString(block.attrs?.content) || (block.innerHTML ?? ""));
+  let text = subheadHtmlValue(pickString(block.attrs?.content) || (block.innerHTML ?? ""));
   if (!text && segmentCursor) {
     const seg = segmentCursor.take("heading");
     if (seg?.kind === "heading") {
-      text = plainLabelText(seg.html);
+      text = subheadHtmlValue(seg.html);
       level = seg.level;
     }
   }
