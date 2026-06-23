@@ -7,6 +7,7 @@ export type ContentImageSheetRow = {
   wordpress_id: number;
   media_wordpress_id: string;
   media_url: string;
+  image_type: string;
   Size: string;
   "OK/Not OK": string;
 };
@@ -16,6 +17,7 @@ const HEADERS: (keyof ContentImageSheetRow)[] = [
   "wordpress_id",
   "media_wordpress_id",
   "media_url",
+  "image_type",
   "Size",
   "OK/Not OK",
 ];

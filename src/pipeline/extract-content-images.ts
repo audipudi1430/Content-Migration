@@ -298,6 +298,7 @@ function toSheetRows(
       wordpress_id: wordpressId,
       media_wordpress_id: media.mediaWordpressId,
       media_url: media.mediaUrl,
+      image_type: refs[i]!.imageType,
       Size: sizeBytes === undefined ? "" : formatFileSizeBytes(sizeBytes),
       "OK/Not OK": sizeOkLabel(sizeBytes, maxBytes),
     });
@@ -419,6 +420,8 @@ export async function runExtractContentImages(argv: string[] = []): Promise<void
 
   sheetRows.sort((a, b) => {
     if (a.wordpress_id !== b.wordpress_id) return a.wordpress_id - b.wordpress_id;
+    const typeCmp = a.image_type.localeCompare(b.image_type);
+    if (typeCmp !== 0) return typeCmp;
     const ma = Number(a.media_wordpress_id) || 0;
     const mb = Number(b.media_wordpress_id) || 0;
     if (ma !== mb) return ma - mb;
