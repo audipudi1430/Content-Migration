@@ -1,9 +1,23 @@
+export type WpMediaSizeVariant = {
+  source_url?: string;
+  filesize?: number;
+  width?: number;
+  height?: number;
+  mime_type?: string;
+};
+
 export type WpMediaItem = {
   id: number;
   source_url: string;
   slug: string;
   mime_type: string;
   title?: { rendered?: string };
+  media_details?: {
+    filesize?: number;
+    width?: number;
+    height?: number;
+    sizes?: Record<string, WpMediaSizeVariant>;
+  };
 };
 
 export type MediaKind = "image" | "video" | "document" | "other";
