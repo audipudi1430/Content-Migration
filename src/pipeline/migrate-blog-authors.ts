@@ -102,6 +102,12 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     trackRef,
     fallbackUrlPath
   );
+  if (pageUrlSource === "fallback") {
+    console.error(
+      `[blog-author] wp_id=${term.id} WARNING: no new_url on tracking row; ` +
+        `using fallback url=${pageUrl} (re-run pipeline:extract after adding new_url column)`
+    );
+  }
   const seo = withMigrationPageUrl(extractWpAuthorSeo(term, fallbackUrlPath), pageUrl);
   const meta = term.meta ?? {};
 

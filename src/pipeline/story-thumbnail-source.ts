@@ -99,8 +99,9 @@ function walkBlocksForMedia(blocks: WpContentBlock[]): BlockMediaHit[] {
 
 /**
  * Thumbnail image source for story migration:
- * 1. Hero / media block from `content.blocks` (`vmware/hero`, etc.) with optional `focalPoint`
- * 2. WordPress `featured_media` fallback
+ * 1. Hero block from `content.blocks` (`vmware/hero`, etc.) with optional `focalPoint`
+ * 2. WordPress `featured_media`
+ * 3. Other media-like blocks, then any block with a media ID
  */
 export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryThumbnailSource | undefined {
   const blocks = extractWpContentBlocks(story);
@@ -115,7 +116,12 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
     };
   }
 
-  const mediaHit = hits.find((h) => h.isMediaLike);
+  const featured = pickFeaturedMediaId(story);
+  if (featured) {
+    return { attachmentId: featured, source: "featured_media" };
+  }
+
+  const mediaHit = hits.find((h) => h.isMediaLike && !h.isHero);
   if (mediaHit) {
     return {
       attachmentId: mediaHit.attachmentId,
@@ -124,18 +130,13 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
     };
   }
 
-  const anyHit = hits[0];
+  const anyHit = hits.find((h) => !h.isHero);
   if (anyHit) {
     return {
       attachmentId: anyHit.attachmentId,
       focalPoint: anyHit.focalPoint,
       source: anyHit.source,
     };
-  }
-
-  const featured = pickFeaturedMediaId(story);
-  if (featured) {
-    return { attachmentId: featured, source: "featured_media" };
   }
 
   return undefined;

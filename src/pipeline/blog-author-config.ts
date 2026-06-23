@@ -26,7 +26,7 @@ export type FileRefShape = "uid" | "uid_array" | "object" | "object_array";
 
 export type BlogAuthorFieldUids = {
   cmsAssetName: string;
-  /** Legacy top-level URL field (optional); page URL for SEO lives under `seoSocial`. */
+  /** Top-level URL field on the content type (same as categories/stories). */
   url: string;
   authorTitle: string;
   authorName: string;
@@ -89,7 +89,7 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
 
   return {
     cmsAssetName: process.env.BLOG_AUTHOR_FIELD_CMS_ASSET_NAME ?? "cms_asset_name",
-    url: process.env.BLOG_AUTHOR_FIELD_URL ?? "",
+    url: process.env.BLOG_AUTHOR_FIELD_URL?.trim() || "url",
     authorTitle: process.env.BLOG_AUTHOR_FIELD_AUTHOR_TITLE ?? "author_title",
     authorName: process.env.BLOG_AUTHOR_FIELD_AUTHOR_NAME ?? "author_name",
     description: process.env.BLOG_AUTHOR_FIELD_DESCRIPTION ?? "description",
@@ -107,7 +107,7 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadAuthorSeoPageUrlShape(),
     ...loadSharedSeoPageUrlFields(),
-    seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL?.trim() ?? "canonical",
+    seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
     metaImageFileField: process.env.BLOG_AUTHOR_SEO_META_IMAGE_FILE_FIELD?.trim() || "file",

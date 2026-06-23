@@ -382,7 +382,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         }
       } else {
         console.error(
-          `[blog] wp_id=${tRow.wp_id} ${featuredImageTarget} skipped: no hero block or featured_media`
+          `[blog] wp_id=${tRow.wp_id} ${featuredImageTarget} skipped: no hero block, featured_media, or media block`
         );
       }
 
