@@ -82,25 +82,28 @@ function resolveMappedRefUid(
   return record?.contentstackUid?.trim() || undefined;
 }
 
-function firstMappedRef(
+function allMappedRefs(
   map: MappingStore,
   kind: WpEntityKind,
   wpIds: number[],
   locale: string | undefined,
   logLabel: string,
   wpStoryId: number
-): string | undefined {
+): string[] {
+  const uids: string[] = [];
+  const missing: number[] = [];
   for (const wpId of wpIds) {
     const uid = resolveMappedRefUid(map, kind, wpId, locale);
-    if (uid) return uid;
+    if (uid) uids.push(uid);
+    else missing.push(wpId);
   }
-  if (wpIds.length > 0) {
+  if (missing.length > 0) {
     console.error(
-      `[blog] wp_id=${wpStoryId} WARNING: no Contentstack mapping for ${logLabel} wp_id(s)=${wpIds.join(",")} ` +
+      `[blog] wp_id=${wpStoryId} WARNING: no Contentstack mapping for ${logLabel} wp_id(s)=${missing.join(",")} ` +
         `(run category/author migration first)`
     );
   }
-  return undefined;
+  return uids;
 }
 
 export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise<void> {
@@ -253,7 +256,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       const categoryWpIds = pickWpTermIds(story[wpTaxonomyCategory]);
       const authorWpIds = pickWpTermIds(story[wpTaxonomyAuthor]);
 
-      const categoryRefUid = firstMappedRef(
+      const categoryRefUids = allMappedRefs(
         map,
         "category",
         categoryWpIds,
@@ -261,7 +264,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         wpTaxonomyCategory,
         tRow.wp_id
       );
-      const authorRefUid = firstMappedRef(
+      const authorRefUids = allMappedRefs(
         map,
         "story_author",
         authorWpIds,
@@ -293,9 +296,9 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         fields,
         pageUrl,
         cmsTitle,
-        categoryRefUid,
+        categoryRefUids,
         categoryRefContentTypeUid,
-        authorRefUid,
+        authorRefUids,
         authorRefContentTypeUid,
         seriesRefUid,
         seriesRefContentTypeUid: seriesRefContentTypeUid || undefined,
@@ -515,7 +518,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       console.error(
         `[blog] wp_id=${tRow.wp_id} title="${cmsTitle}" url=${pageUrl} (${pageUrlSource}) ` +
-          `category=${categoryRefUid ?? "(none)"} author=${authorRefUid ?? "(none)"} ` +
+          `category=${categoryRefUids.length > 0 ? categoryRefUids.join(",") : "(none)"} ` +
+            `author=${authorRefUids.length > 0 ? authorRefUids.join(",") : "(none)"} ` +
           `body=${bodyResult.stats.source} blocks=${bodyResult.blocks.length} ` +
           `(text=${bodyResult.stats.text} image=${bodyResult.stats.image} ` +
           `video=${bodyResult.stats.video} skipped=${bodyResult.stats.skipped}) ` +

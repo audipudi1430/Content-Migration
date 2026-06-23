@@ -2,7 +2,7 @@ import type { BlogFieldUids, BlogReferenceShape } from "./blog-config.js";
 import type { WpAuthorSeoData } from "./blog-author-seo.js";
 import { pickRenderedTitle } from "./blog-author-seo.js";
 import {
-  contentstackFileRefValue,
+  contentstackAssetRefValue,
   setAuthorImageField,
   type ImageGroupFieldUids,
 } from "./blog-author-payload.js";
@@ -29,6 +29,22 @@ export function setEntryReference(
 ): void {
   if (!fieldUid || !uid || !contentTypeUid) return;
   entry[fieldUid] = contentstackEntryRefValue(uid, contentTypeUid, shape);
+}
+
+/** Multi-reference field (`ref_multiple: true`) — always an array of entry refs. */
+export function setEntryReferences(
+  entry: Record<string, unknown>,
+  fieldUid: string,
+  uids: string[],
+  contentTypeUid: string
+): void {
+  if (!fieldUid || !contentTypeUid) return;
+  const refs = uids
+    .map((uid) => uid.trim())
+    .filter(Boolean)
+    .map((uid) => ({ uid, _content_type_uid: contentTypeUid }));
+  if (refs.length === 0) return;
+  entry[fieldUid] = refs;
 }
 
 export function setScalar(entry: Record<string, unknown>, fieldUid: string, value: unknown): void {
@@ -90,9 +106,9 @@ export type BuildBlogPayloadInput = {
   fields: BlogFieldUids;
   pageUrl: string;
   cmsTitle: string;
-  categoryRefUid?: string;
+  categoryRefUids?: string[];
   categoryRefContentTypeUid: string;
-  authorRefUid?: string;
+  authorRefUids?: string[];
   authorRefContentTypeUid: string;
   seriesRefUid?: string;
   seriesRefContentTypeUid?: string;
@@ -111,9 +127,9 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
     fields,
     pageUrl,
     cmsTitle,
-    categoryRefUid,
+    categoryRefUids,
     categoryRefContentTypeUid,
-    authorRefUid,
+    authorRefUids,
     authorRefContentTypeUid,
     seriesRefUid,
     seriesRefContentTypeUid,
@@ -141,24 +157,12 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   setScalar(entry, fields.showInNewsroomLanding, selectDefaults.showInNewsroomLanding);
   setScalar(entry, fields.showInLatestBlogs, selectDefaults.showInLatestBlogs);
 
-  if (categoryRefUid) {
-    setEntryReference(
-      entry,
-      fields.blogCategory,
-      categoryRefUid,
-      categoryRefContentTypeUid,
-      fields.referenceShape
-    );
+  if (categoryRefUids && categoryRefUids.length > 0) {
+    setEntryReferences(entry, fields.blogCategory, categoryRefUids, categoryRefContentTypeUid);
   }
 
-  if (authorRefUid) {
-    setEntryReference(
-      entry,
-      fields.blogAuthorProfile,
-      authorRefUid,
-      authorRefContentTypeUid,
-      fields.referenceShape
-    );
+  if (authorRefUids && authorRefUids.length > 0) {
+    setEntryReferences(entry, fields.blogAuthorProfile, authorRefUids, authorRefContentTypeUid);
   }
 
   if (seriesRefUid && seriesRefContentTypeUid) {
@@ -251,10 +255,12 @@ export function setThumbnailField(
 
   const presetValue = usePresetPicker
     ? buildImagePresetPickerValue(assetUid, fields, mergePreset, options)
-    : {
-        ...mergePreset,
-        [imageField]: contentstackFileRefValue(assetUid, fields.fileRefShape),
-      };
+    : presetField === imageField
+      ? contentstackAssetRefValue(assetUid, "object")
+      : {
+          ...mergePreset,
+          [imageField]: contentstackAssetRefValue(assetUid, fields.fileRefShape),
+        };
 
   entry[fields.thumbnail] = {
     ...mergeThumbnail,

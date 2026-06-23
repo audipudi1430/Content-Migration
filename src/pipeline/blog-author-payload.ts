@@ -11,15 +11,39 @@ import {
  * @see https://www.contentstack.com/docs/developers/apis/content-management-api
  */
 export function contentstackFileRefValue(assetUid: string, shape: FileRefShape = "uid"): unknown {
+  const uid = assetUid.trim();
+  if (!uid) return undefined;
   switch (shape) {
     case "uid_array":
-      return [assetUid];
+      return [uid];
     case "object":
-      return { uid: assetUid };
+      return { uid };
     case "object_array":
-      return [{ uid: assetUid }];
+      return [{ uid }];
     default:
-      return assetUid;
+      return uid;
+  }
+}
+
+/** CMA asset reference (Image Preset Picker / file fields that require `_content_type_uid`). */
+export function contentstackAssetRefValue(
+  assetUid: string,
+  shape: FileRefShape = "object"
+): unknown {
+  const uid = assetUid.trim();
+  if (!uid) return undefined;
+  const ref = { uid, _content_type_uid: "sys_assets" as const };
+  switch (shape) {
+    case "uid":
+      return uid;
+    case "uid_array":
+      return [uid];
+    case "object_array":
+      return [ref];
+    case "object":
+      return ref;
+    default:
+      return ref;
   }
 }
 

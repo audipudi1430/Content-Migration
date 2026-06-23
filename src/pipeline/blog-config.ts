@@ -77,8 +77,8 @@ function loadBlogSeoPageUrlShape() {
 }
 
 export function loadBlogReferenceShape(): BlogReferenceShape {
-  const raw = (process.env.BLOG_REFERENCE_SHAPE ?? "object").toLowerCase();
-  return raw === "array" ? "array" : "object";
+  const raw = (process.env.BLOG_REFERENCE_SHAPE ?? "array").toLowerCase();
+  return raw === "object" ? "object" : "array";
 }
 
 export function loadBlogContentTypeUid(): string {
