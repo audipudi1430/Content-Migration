@@ -14,6 +14,18 @@ function rowKey(r: TrackingRow): string {
   return trackingRowMergeKey(r);
 }
 
+/** Apply `MIGRATION_MICROSITE` from env onto a tracking row before persist. */
+export function stampTrackingMicrosite(row: TrackingRow, paths: PipelinePathsConfig): void {
+  const ms = paths.microsite.trim();
+  if (ms) row.microsite = ms;
+}
+
+export function stampAllTrackingMicrosites(rows: TrackingRow[], paths: PipelinePathsConfig): void {
+  const ms = paths.microsite.trim();
+  if (!ms) return;
+  for (const row of rows) row.microsite = ms;
+}
+
 export function trackingRowToMongoDoc(
   paths: PipelinePathsConfig,
   row: TrackingRow,
@@ -56,6 +68,7 @@ export function trackingRowToMongoDoc(
     wpType: row.wp_type || undefined,
     wpLink: row.wp_link || undefined,
     wpExtractJson: row.wp_extract_json || undefined,
+    microsite: row.microsite || undefined,
   };
 }
 
@@ -65,6 +78,7 @@ export async function persistOneRow(
   row: TrackingRow,
   mongoCfg: MongoConfig
 ): Promise<void> {
+  stampTrackingMicrosite(row, paths);
   const k = rowKey(row);
   const idx = allRows.findIndex((r) => rowKey(r) === k);
   if (idx >= 0) allRows[idx] = row;

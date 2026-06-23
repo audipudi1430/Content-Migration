@@ -58,6 +58,7 @@ export type MigrationTrackingDoc = {
   wpLink?: string;
   /** WordPress REST snapshot (extract enrich). */
   wpExtractJson?: string;
+  microsite?: string;
 };
 
 export function trackingDocId(

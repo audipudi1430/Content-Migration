@@ -46,6 +46,7 @@ function rowFromRecord(r: Record<string, unknown>): TrackingRow {
     wp_type: String(r.wp_type ?? ""),
     wp_link: String(r.wp_link ?? ""),
     wp_extract_json: String(r.wp_extract_json ?? ""),
+    microsite: String(r.microsite ?? ""),
   };
 }
 
@@ -96,6 +97,7 @@ export function mergeTrackingRows(existing: TrackingRow[], incoming: TrackingRow
         wp_type: r.wp_type,
         wp_link: r.wp_link,
         wp_extract_json: r.wp_extract_json,
+        microsite: r.microsite || prev.microsite,
         published_at: prev.published_at || r.published_at,
         updated_at: r.updated_at,
       });

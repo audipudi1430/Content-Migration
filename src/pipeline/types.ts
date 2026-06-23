@@ -37,6 +37,8 @@ export type TrackingRow = {
   wp_link: string;
   /** Compact JSON snapshot of useful REST fields (extract enrich). */
   wp_extract_json: string;
+  /** Microsite label from `MIGRATION_MICROSITE` (tracking / MongoDB). */
+  microsite: string;
 };
 
 export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRow, "source_sheet" | "row_kind" | "url">): TrackingRow {
@@ -66,5 +68,6 @@ export function emptyTrackingRow(partial: Partial<TrackingRow> & Pick<TrackingRo
     wp_type: partial.wp_type ?? "",
     wp_link: partial.wp_link ?? "",
     wp_extract_json: partial.wp_extract_json ?? "",
+    microsite: partial.microsite ?? "",
   };
 }

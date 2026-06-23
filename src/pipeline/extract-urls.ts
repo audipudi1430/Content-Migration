@@ -17,7 +17,7 @@ import {
 } from "./tracking-io.js";
 import { emptyTrackingRow, type TrackingRow, type TrackingRowKind } from "./types.js";
 import { numberArg, stringArg } from "./args.js";
-import { trackingRowToMongoDoc } from "./tracking-sync.js";
+import { trackingRowToMongoDoc, stampAllTrackingMicrosites } from "./tracking-sync.js";
 import { inferWpIdFromUrl, enrichTrackingRowsFromWordPress } from "./wp-extract-enrich.js";
 import {
   categoryRowHasSheetData,
@@ -103,7 +103,8 @@ function parseSheetRows(
   matrix: string[][],
   rowKind: TrackingRowKind,
   wpRestPath: string,
-  contentTypeUid: string
+  contentTypeUid: string,
+  microsite: string
 ): TrackingRow[] {
   if (matrix.length === 0) return [];
   const headerRow = matrix[0].map((c) => String(c));
@@ -157,6 +158,7 @@ function parseSheetRows(
             migration_message: "",
             source_columns_json: sourceColumnsJson,
             extracted_at: extractedAt,
+            microsite,
           })
         );
         continue;
@@ -174,6 +176,7 @@ function parseSheetRows(
           migration_message: "WordPress ID missing and could not be inferred from URL",
           source_columns_json: sourceColumnsJson,
           extracted_at: extractedAt,
+          microsite,
         })
       );
       continue;
@@ -190,6 +193,7 @@ function parseSheetRows(
         migration_status: "Pending",
         source_columns_json: sourceColumnsJson,
         extracted_at: extractedAt,
+        microsite,
       })
     );
   }
@@ -347,7 +351,7 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
     const kind: TrackingRowKind = name === mediaTab ? "media" : "content";
     const restForRow = wpRestPathForSourceTab(paths, name, kind);
     const ct = contentTypeUidForSourceTab(paths, name, kind);
-    const rows = parseSheetRows(name, matrix, kind, restForRow, ct);
+    const rows = parseSheetRows(name, matrix, kind, restForRow, ct, paths.microsite);
     incoming.push(...rows);
     const withWp = rows.filter((r) => r.wp_id > 0).length;
     const sheetOnly = rows.filter((r) => r.wp_id === 0).length;
@@ -371,6 +375,8 @@ export async function runExtractUrls(argv: string[] = []): Promise<void> {
   const merged = tabFilter
     ? mergeTrackingRowsReplacingSourceTab(existing, incoming, tabsToProcess[0]!)
     : mergeTrackingRows(existing, incoming);
+
+  stampAllTrackingMicrosites(merged, paths);
 
   writeTrackingWorkbook(paths.trackingWorkbook, paths.trackingSheet, merged, perTabSheets);
 

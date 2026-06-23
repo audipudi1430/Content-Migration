@@ -59,6 +59,8 @@ export type PipelinePathsConfig = {
   runId: string;
   /** Optional label for dashboards (e.g. stack-a). */
   envLabel: string;
+  /** Logical microsite label stored on every tracking row (e.g. news, blog). */
+  microsite: string;
   featuredImageFieldUid: string | undefined;
   publishEnvironments: string[];
   publishLocales: string[];
@@ -86,6 +88,7 @@ export function loadPipelinePaths(): PipelinePathsConfig {
       process.env.MIGRATION_CONTENT_TYPE_UID ?? process.env.CS_CONTENT_TYPE_POST ?? "",
     runId: process.env.MIGRATION_RUN_ID ?? "default",
     envLabel: process.env.MIGRATION_ENV_LABEL ?? "",
+    microsite: process.env.MIGRATION_MICROSITE?.trim() ?? "",
     featuredImageFieldUid: process.env.CS_FEATURED_IMAGE_FIELD_UID?.trim() || undefined,
     publishEnvironments: publishEnvs.length ? publishEnvs : ["production"],
     publishLocales: publishLocales.length ? publishLocales : ["en-us"],
