@@ -1,6 +1,7 @@
 import { blogArticlePageUrlPath } from "./blog-config.js";
 import type { WpAuthorSeoSource } from "./blog-author-seo.js";
 import { extractWpAuthorSeo, pickRenderedTitle as pickTitle, type WpAuthorSeoData } from "./blog-author-seo.js";
+import { normalizeWpText } from "./contentstack-rte.js";
 
 export type WpStory = WpAuthorSeoSource & {
   title?: { rendered?: string } | string;
@@ -12,7 +13,7 @@ export { pickYoastOgImageUrl } from "./blog-author-seo.js";
 function storyDisplayName(story: WpStory): string {
   const fromTitle = pickTitle(story.title);
   if (fromTitle) return fromTitle;
-  return String(story.name ?? "").trim();
+  return normalizeWpText(String(story.name ?? ""));
 }
 
 /** SEO data with article URL path `/articles/{slug}`. */

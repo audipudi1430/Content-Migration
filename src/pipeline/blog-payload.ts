@@ -7,6 +7,7 @@ import {
   type ImageGroupFieldUids,
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
+import { normalizeWpText } from "./contentstack-rte.js";
 
 export { pickRenderedTitle };
 
@@ -96,8 +97,8 @@ export function pickMetaString(meta: Record<string, unknown> | undefined, key: s
   if (!key || !meta) return "";
   const v = meta[key];
   if (v === undefined || v === null) return "";
-  if (typeof v === "string") return v.trim();
-  if (typeof v === "number" || typeof v === "boolean") return String(v).trim();
+  if (typeof v === "string") return normalizeWpText(v);
+  if (typeof v === "number" || typeof v === "boolean") return normalizeWpText(String(v));
   return "";
 }
 

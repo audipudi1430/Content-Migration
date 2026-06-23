@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeWpText } from "./contentstack-rte.js";
 import { normalizeMigrationUrlPath, pickNewUrlFromRow } from "./migration-url.js";
 import type { TrackingRow } from "./types.js";
 import type { WpStoryCategory } from "./blog-category-seo.js";
@@ -187,7 +188,7 @@ export function parseCategorySheetColumns(
     const isPageRaw = pickFromRowObject(o, IS_PAGE_KEYS);
     const levelRaw = pickFromRowObject(o, LEVEL_KEYS);
     return {
-      categoryName,
+      categoryName: normalizeWpText(categoryName),
       showUrl: showUrlFromIsPage(isPageRaw),
       categoryLevel: mapCategoryLevel(levelRaw),
       isPageRaw,

@@ -50,6 +50,7 @@ import {
 } from "./blog-story-fetch.js";
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
+import { normalizeWpText } from "./contentstack-rte.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
@@ -241,7 +242,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       }
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
-      const cmsTitle = pickRenderedTitle(story.title) || `Story ${story.id ?? tRow.wp_id}`;
+      const cmsTitle =
+        pickRenderedTitle(story.title) || normalizeWpText(pickString(story.name)) || `Story ${story.id ?? tRow.wp_id}`;
       const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
         trackRef,
         blogArticlePageUrlPath(slug)

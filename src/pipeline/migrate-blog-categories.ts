@@ -29,6 +29,7 @@ import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-ups
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
+import { normalizeWpText } from "./contentstack-rte.js";
 import {
   buildSheetOnlyCategoryTerm,
   categoryMappingSourceKey,
@@ -77,8 +78,8 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   const sheet = parseCategorySheetColumns(trackRef);
   const sheetOnly = isSheetOnlyCategoryRow(trackRef);
   const useRest = !sheetOnly;
-  const wpName = pickString(term.name) || `Category ${term.id}`;
-  const displayName = sheet.categoryName || wpName;
+  const wpName = normalizeWpText(pickString(term.name)) || `Category ${term.id}`;
+  const displayName = normalizeWpText(sheet.categoryName || wpName);
   const slug = pickString(term.slug) || String(term.id);
   const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
     trackRef,

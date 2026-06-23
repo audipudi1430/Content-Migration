@@ -8,6 +8,8 @@
  * - Public path: `link` pathname, else slug-based path from `blogAuthorPageUrlPath`
  */
 
+import { normalizeWpText } from "./contentstack-rte.js";
+
 export type WpAuthorSeoSource = {
   id: number;
   name: string;
@@ -47,6 +49,11 @@ function pickString(v: unknown): string {
   return String(v).trim();
 }
 
+function pickDecodedString(v: unknown): string {
+  if (v === undefined || v === null) return "";
+  return normalizeWpText(String(v));
+}
+
 /** Pathname from full WordPress `link` URL. */
 export function pathFromWpLink(link: string | undefined): string {
   const raw = pickString(link);
@@ -63,10 +70,13 @@ export function extractWpAuthorSeo(term: WpAuthorSeoSource, fallbackUrlPath: str
   const yoast = term.yoast_head_json ?? {};
 
   const seoTitleTag =
-    pickString(m.seo_title ?? m._yoast_wpseo_title) || pickString(yoast.title) || pickString(term.name);
+    pickDecodedString(m.seo_title ?? m._yoast_wpseo_title) ||
+    pickDecodedString(yoast.title) ||
+    pickDecodedString(term.name);
 
   const metaDescription =
-    pickString(m.meta_description ?? m._yoast_wpseo_metadesc) || pickString(yoast.description);
+    pickDecodedString(m.meta_description ?? m._yoast_wpseo_metadesc) ||
+    pickDecodedString(yoast.description);
 
   const fromLink = pathFromWpLink(term.link);
   const fromYoastCanonical = pickString(yoast.canonical);
@@ -87,9 +97,9 @@ export function extractWpAuthorSeo(term: WpAuthorSeoSource, fallbackUrlPath: str
 export function pickRenderedTitle(title: unknown): string {
   if (title && typeof title === "object" && "rendered" in title) {
     const rendered = (title as { rendered?: unknown }).rendered;
-    if (typeof rendered === "string") return rendered.trim();
+    if (typeof rendered === "string") return normalizeWpText(rendered);
   }
-  if (typeof title === "string") return title.trim();
+  if (typeof title === "string") return normalizeWpText(title);
   return "";
 }
 
@@ -99,5 +109,5 @@ export function resolveSeoMetaDescription(
   source: MetaDescriptionSource = "name"
 ): string {
   if (source === "wp_seo" && seo.metaDescription) return seo.metaDescription;
-  return entryName;
+  return normalizeWpText(entryName);
 }

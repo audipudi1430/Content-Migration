@@ -26,6 +26,7 @@ import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-ups
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
+import { normalizeWpText } from "./contentstack-rte.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
 import type { TrackingRow } from "./types.js";
 
@@ -95,7 +96,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   slug: string;
 }> {
   const { term, fields, trackRef, warnings } = ctx;
-  const name = pickString(term.name) || `Author ${term.id}`;
+  const name = normalizeWpText(pickString(term.name)) || `Author ${term.id}`;
   const slug = pickString(term.slug) || String(term.id);
   const fallbackUrlPath = blogAuthorPageUrlPath(slug);
   const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
@@ -118,7 +119,7 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
     title: name,
   };
 
-  const authorTitle = pickString(meta.position);
+  const authorTitle = normalizeWpText(pickString(meta.position));
   setScalar(entryPayload, fields.cmsAssetName, name);
   setScalar(entryPayload, fields.url, pageUrl);
   setScalar(entryPayload, fields.authorTitle, authorTitle);
