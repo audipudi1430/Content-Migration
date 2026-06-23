@@ -86,13 +86,11 @@ function videoAudioBlockPayload(
 }
 
 function headingTextFields(
-  uids: BlogBodyBlockUids,
+  _uids: BlogBodyBlockUids,
   text: string,
-  level: number
-): { groupTitle?: string; subhead?: string } {
-  const plain = plainLabelText(text);
-  const subheadHtml = subheadHtmlValue(text);
-  return level <= uids.headingGroupMaxLevel ? { groupTitle: plain } : { subhead: subheadHtml };
+  _level: number
+): { subhead: string } {
+  return { subhead: subheadHtmlValue(text) };
 }
 
 function pickPositiveInt(v: unknown): number | undefined {
@@ -152,94 +150,12 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
   };
 }
 
-function joinHtmlChunks(a: string, b: string): string {
-  const left = a.trim();
-  const right = b.trim();
-  if (!left) return right;
-  if (!right) return left;
-  return left + right;
-}
-
-function readTextBlockFields(
-  block: Record<string, unknown>,
-  uids: BlogBodyBlockUids
-): { groupTitle: string; subhead: string; text: string } | undefined {
-  const inner = block[uids.text.blockUid];
-  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return undefined;
-  const f = inner as Record<string, unknown>;
-  return {
-    groupTitle: pickString(f[uids.text.groupTitle]),
-    subhead: pickString(f[uids.text.subhead]),
-    text: pickString(f[uids.text.text]),
-  };
-}
-
-/**
- * Merge consecutive text blocks into section blocks like Contentstack stores them:
- * heading → `subhead`, following paragraphs → concatenated `text` in the same block.
- */
+/** One modular `text` block per WordPress paragraph/heading (no merging). */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids
+  _uids: BlogBodyBlockUids
 ): Record<string, unknown>[] {
-  const out: Record<string, unknown>[] = [];
-  let pending: { groupTitle: string; subhead: string; text: string } | null = null;
-
-  const flush = (): void => {
-    if (!pending) return;
-    if (!pending.groupTitle && !pending.subhead && !pending.text) {
-      pending = null;
-      return;
-    }
-    out.push(
-      textBlockPayload(uids, {
-        groupTitle: pending.groupTitle,
-        subhead: pending.subhead,
-        text: pending.text,
-      })
-    );
-    pending = null;
-  };
-
-  for (const block of blocks) {
-    const textFields = readTextBlockFields(block, uids);
-    if (!textFields) {
-      flush();
-      out.push(block);
-      continue;
-    }
-
-    const { groupTitle, subhead, text } = textFields;
-    const isHeadingOnly = Boolean(groupTitle || subhead) && !text;
-    const isTextOnly = Boolean(text) && !groupTitle && !subhead;
-
-    if (isHeadingOnly) {
-      flush();
-      pending = { groupTitle, subhead, text: "" };
-      continue;
-    }
-
-    if (isTextOnly) {
-      if (!pending) {
-        pending = { groupTitle: "", subhead: "", text };
-      } else {
-        pending.text = joinHtmlChunks(pending.text, text);
-      }
-      continue;
-    }
-
-    flush();
-    out.push(
-      textBlockPayload(uids, {
-        groupTitle,
-        subhead,
-        text,
-      })
-    );
-  }
-
-  flush();
-  return out;
+  return blocks;
 }
 
 /** Wrap modular blocks in the Body Content global field object for CMA. */
@@ -724,28 +640,6 @@ export async function buildBodyContentFromWpStory(
   return { blocks: consolidated, stats };
 }
 
-function isParagraphBlockName(name: string): boolean {
-  return name === "core/paragraph" || name === "core/freeform";
-}
-
-function collectFollowingParagraphHtml(
-  wpBlocks: WpContentBlock[],
-  startIndex: number,
-  segmentCursor?: RenderedSegmentCursor
-): { html: string; nextIndex: number } {
-  const parts: string[] = [];
-  let j = startIndex;
-  while (j < wpBlocks.length) {
-    const next = normalizeWpBlock(wpBlocks[j]!);
-    const nextName = normalizeBlockName(next.blockName);
-    if (!isParagraphBlockName(nextName)) break;
-    const html = paragraphHtmlFromBlock(next, segmentCursor);
-    if (html) parts.push(html);
-    j += 1;
-  }
-  return { html: parts.join(""), nextIndex: j };
-}
-
 async function convertWpBlocks(
   wpBlocks: WpContentBlock[],
   uids: BlogBodyBlockUids,
@@ -757,39 +651,9 @@ async function convertWpBlocks(
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
 
-  let i = 0;
-  while (i < wpBlocks.length) {
-    const normalized = normalizeWpBlock(wpBlocks[i]!);
-    const name = normalizeBlockName(normalized.blockName);
-
-    if (name === "core/heading") {
-      const heading = headingFromBlock(normalized, segmentCursor);
-      if (heading) {
-        const headingFields = headingTextFields(uids, heading.text, heading.level);
-        const { html: paraHtml, nextIndex } = collectFollowingParagraphHtml(
-          wpBlocks,
-          i + 1,
-          segmentCursor
-        );
-        if (paraHtml) {
-          out.push(textBlockPayload(uids, { ...headingFields, text: paraHtml }));
-          stats.text += 1;
-          log?.(
-            `mapped core/heading + ${nextIndex - i - 1} paragraph(s) → ` +
-              `${headingFields.groupTitle ? "group_title" : "subhead"} + text`
-          );
-          i = nextIndex;
-          continue;
-        }
-        out.push(textBlockPayload(uids, headingFields));
-        stats.text += 1;
-        i += 1;
-        continue;
-      }
-    }
-
+  for (const block of wpBlocks) {
     const converted = await convertOneWpBlock(
-      wpBlocks[i]!,
+      block,
       uids,
       resolveImage,
       resolveVideo,
@@ -798,7 +662,6 @@ async function convertWpBlocks(
       segmentCursor
     );
     out.push(...converted);
-    i += 1;
   }
 
   return out;
