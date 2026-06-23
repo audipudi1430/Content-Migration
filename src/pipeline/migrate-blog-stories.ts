@@ -535,7 +535,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             `author=${authorRefUids.length > 0 ? authorRefUids.join(",") : "(none)"} ` +
           `body=${bodyResult.stats.source} blocks=${bodyResult.blocks.length} ` +
           `(text=${bodyResult.stats.text} image=${bodyResult.stats.image} ` +
-          `video=${bodyResult.stats.video} skipped=${bodyResult.stats.skipped}) ` +
+          `testimonial=${bodyResult.stats.testimonial} video=${bodyResult.stats.video} ` +
+          `skipped=${bodyResult.stats.skipped}) ` +
           `sub_header="${pickMetaString(
             story.meta && typeof story.meta === "object" && !Array.isArray(story.meta)
               ? (story.meta as Record<string, unknown>)

@@ -1,7 +1,7 @@
 import type { BlogBodyBlockUids, BlogBodySource } from "./blog-body-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
 import { contentstackEntryRefValue } from "./blog-payload.js";
-import { htmlToPlainWithBreaks, stripUnsafeHtml } from "./contentstack-rte.js";
+import { decodeHtmlEntities, htmlToPlainWithBreaks, stripUnsafeHtml } from "./contentstack-rte.js";
 
 /** WordPress block — supports Gutenberg REST (`name`/`attributes`) and classic (`blockName`/`attrs`). */
 export type WpContentBlock = {
@@ -35,15 +35,39 @@ export type BodyContentBuildResult = {
   stats: {
     text: number;
     image: number;
+    testimonial: number;
     video: number;
     skipped: number;
     source: "wp_blocks" | "rendered_html";
   };
 };
 
-function imageBlockPayload(uids: BlogBodyBlockUids, assetUid: string): Record<string, unknown> {
-  return wrapModularBlock(uids.image.blockUid, {
+function imageCaptionValue(html: string): string {
+  return stripUnsafeHtml(decodeHtmlEntities(html)).trim();
+}
+
+function imageBlockPayload(
+  uids: BlogBodyBlockUids,
+  assetUid: string,
+  caption?: string
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {
     [uids.image.file]: contentstackFileRefValue(assetUid, uids.fileRefShape),
+  };
+  if (uids.image.caption) {
+    fields[uids.image.caption] = caption ? imageCaptionValue(caption) : "";
+  }
+  return wrapModularBlock(uids.image.blockUid, fields);
+}
+
+function testimonialBlockPayload(
+  uids: BlogBodyBlockUids,
+  quote: string,
+  author: string
+): Record<string, unknown> {
+  return wrapModularBlock(uids.testimonial.blockUid, {
+    [uids.testimonial.quote]: stripUnsafeHtml(decodeHtmlEntities(quote)).trim(),
+    [uids.testimonial.author]: plainLabelText(author),
   });
 }
 
@@ -604,6 +628,7 @@ export async function buildBodyContentFromWpStory(
   const stats = {
     text: 0,
     image: 0,
+    testimonial: 0,
     video: 0,
     skipped: 0,
     source: "wp_blocks" as "wp_blocks" | "rendered_html",
@@ -670,14 +695,16 @@ export async function buildBodyContentFromWpStory(
     if (seg.kind === "quote") {
       const { quote, author } = parseQuoteFromHtml(seg.html);
       if (!quote) continue;
-      const quoteHtml = author ? `<blockquote><p>${quote}</p><cite>${author}</cite></blockquote>` : `<p>${quote}</p>`;
-      blocks.push(textBlockPayload(uids, { text: stripUnsafeHtml(quoteHtml) }));
-      stats.text += 1;
+      blocks.push(testimonialBlockPayload(uids, quote, author));
+      stats.testimonial += 1;
       continue;
     }
 
     if (seg.kind === "image" || seg.kind === "figure") {
-      const parsed = seg.kind === "figure" ? parseFigureImage(seg.html) : { src: seg.src, alt: seg.alt, caption: "" };
+      const parsed =
+        seg.kind === "figure"
+          ? parseFigureImage(seg.html)
+          : { src: seg.src, alt: seg.alt, caption: "", attachmentId: undefined as number | undefined };
       const assetUid = await resolveImage({
         attachmentId: "attachmentId" in parsed ? parsed.attachmentId : undefined,
         imageUrl: parsed.src,
@@ -688,13 +715,35 @@ export async function buildBodyContentFromWpStory(
         log?.(`skipped image (no asset): ${parsed.src}`);
         continue;
       }
-      blocks.push(imageBlockPayload(uids, assetUid));
+      blocks.push(imageBlockPayload(uids, assetUid, parsed.caption || undefined));
       stats.image += 1;
     }
   }
 
   const consolidated = consolidateModularTextBlocks(blocks, uids);
   return { blocks: consolidated, stats };
+}
+
+function isParagraphBlockName(name: string): boolean {
+  return name === "core/paragraph" || name === "core/freeform";
+}
+
+function collectFollowingParagraphHtml(
+  wpBlocks: WpContentBlock[],
+  startIndex: number,
+  segmentCursor?: RenderedSegmentCursor
+): { html: string; nextIndex: number } {
+  const parts: string[] = [];
+  let j = startIndex;
+  while (j < wpBlocks.length) {
+    const next = normalizeWpBlock(wpBlocks[j]!);
+    const nextName = normalizeBlockName(next.blockName);
+    if (!isParagraphBlockName(nextName)) break;
+    const html = paragraphHtmlFromBlock(next, segmentCursor);
+    if (html) parts.push(html);
+    j += 1;
+  }
+  return { html: parts.join(""), nextIndex: j };
 }
 
 async function convertWpBlocks(
@@ -708,9 +757,39 @@ async function convertWpBlocks(
 ): Promise<Record<string, unknown>[]> {
   const out: Record<string, unknown>[] = [];
 
-  for (const block of wpBlocks) {
+  let i = 0;
+  while (i < wpBlocks.length) {
+    const normalized = normalizeWpBlock(wpBlocks[i]!);
+    const name = normalizeBlockName(normalized.blockName);
+
+    if (name === "core/heading") {
+      const heading = headingFromBlock(normalized, segmentCursor);
+      if (heading) {
+        const headingFields = headingTextFields(uids, heading.text, heading.level);
+        const { html: paraHtml, nextIndex } = collectFollowingParagraphHtml(
+          wpBlocks,
+          i + 1,
+          segmentCursor
+        );
+        if (paraHtml) {
+          out.push(textBlockPayload(uids, { ...headingFields, text: paraHtml }));
+          stats.text += 1;
+          log?.(
+            `mapped core/heading + ${nextIndex - i - 1} paragraph(s) → ` +
+              `${headingFields.groupTitle ? "group_title" : "subhead"} + text`
+          );
+          i = nextIndex;
+          continue;
+        }
+        out.push(textBlockPayload(uids, headingFields));
+        stats.text += 1;
+        i += 1;
+        continue;
+      }
+    }
+
     const converted = await convertOneWpBlock(
-      block,
+      wpBlocks[i]!,
       uids,
       resolveImage,
       resolveVideo,
@@ -719,6 +798,7 @@ async function convertWpBlocks(
       segmentCursor
     );
     out.push(...converted);
+    i += 1;
   }
 
   return out;
@@ -896,7 +976,7 @@ async function convertOneWpBlock(
   if (name === "core/image") {
     const attachmentId = pickPositiveInt(normalized.attrs?.id);
     const imageUrl = pickString(normalized.attrs?.url);
-    const caption = pickString(normalized.attrs?.caption) || pickString(normalized.attrs?.alt);
+    const caption = pickString(normalized.attrs?.caption);
     const assetUid = await resolveImage({
       attachmentId,
       imageUrl,
@@ -907,8 +987,9 @@ async function convertOneWpBlock(
       log?.(`skipped core/image wp attachment=${attachmentId ?? "?"} url=${imageUrl || "(none)"}`);
       return [];
     }
-    result.push(imageBlockPayload(uids, assetUid));
+    result.push(imageBlockPayload(uids, assetUid, caption || undefined));
     stats.image += 1;
+    if (caption) log?.(`mapped core/image caption (${caption.length} chars)`);
     return result;
   }
 
@@ -942,19 +1023,18 @@ async function convertOneWpBlock(
   if (name === "core/quote" || name === "core/pullquote") {
     const parsed = parseQuoteFromHtml(normalized.innerHTML ?? "");
     const quote =
-      parsed.quote ||
       pickString(normalized.attrs?.value) ||
+      parsed.quote ||
       pickString(normalized.attrs?.content) ||
       stripTags(normalized.innerHTML ?? "");
-    const author = parsed.author || pickString(normalized.attrs?.citation);
+    const author = pickString(normalized.attrs?.citation) || parsed.author;
     if (!quote) {
       stats.skipped += 1;
       return [];
     }
-    const quoteHtml = author
-      ? `<blockquote><p>${quote}</p><cite>${author}</cite></blockquote>`
-      : `<p>${quote}</p>`;
-    outPushText(uids, { text: stripUnsafeHtml(quoteHtml) }, stats, result);
+    result.push(testimonialBlockPayload(uids, quote, author));
+    stats.testimonial += 1;
+    log?.(`mapped ${name} as testimonial`);
     return result;
   }
 

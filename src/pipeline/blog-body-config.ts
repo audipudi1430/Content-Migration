@@ -6,7 +6,7 @@ import type { BlogReferenceShape } from "./blog-config.js";
  * Body Content global field on `blog` — references global `modular_body`.
  *
  * CMA shape:
- * `modular_body: { modular_blocks: [{ text: { group_title, subhead, text } }, { image: { file } }, ...] }`
+ * `modular_body: { modular_blocks: [{ text: { group_title, subhead, text } }, { image: { file, caption } }, { testimonial: { quote, author } }, ...] }`
  */
 export type BlogBodyBlockUids = {
   /** Global field UID on the blog content type (e.g. `modular_body`). */
@@ -24,6 +24,12 @@ export type BlogBodyBlockUids = {
   image: {
     blockUid: string;
     file: string;
+    caption: string;
+  };
+  testimonial: {
+    blockUid: string;
+    quote: string;
+    author: string;
   };
   videoAudio: {
     blockUid: string;
@@ -71,6 +77,12 @@ export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
     image: {
       blockUid: process.env.BLOG_BODY_BLOCK_IMAGE ?? "image",
       file: process.env.BLOG_BODY_IMAGE_FILE ?? "file",
+      caption: process.env.BLOG_BODY_IMAGE_CAPTION ?? "caption",
+    },
+    testimonial: {
+      blockUid: process.env.BLOG_BODY_BLOCK_TESTIMONIAL ?? "testimonial",
+      quote: process.env.BLOG_BODY_TESTIMONIAL_QUOTE ?? "quote",
+      author: process.env.BLOG_BODY_TESTIMONIAL_AUTHOR ?? "author",
     },
     videoAudio: {
       blockUid: process.env.BLOG_BODY_BLOCK_VIDEO_AUDIO ?? "video",
