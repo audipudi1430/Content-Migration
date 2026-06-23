@@ -54,7 +54,7 @@ import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-ups
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
-import { resolveWpVideoEntryUid } from "./resolve-wp-video-entry.js";
+import { tryResolveVideoEntryForBody } from "./ensure-video-entry.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -379,6 +379,16 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           }
           trackRef.featured_media_wp_id = String(thumbnailMediaId);
           trackRef.contentstack_asset_uid = assetUid;
+        } else {
+          const imageField =
+            featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail;
+          const sourceLabel = thumbSource?.source ?? "featured_media";
+          const msg =
+            `${imageField} omitted: could not resolve WordPress media ${thumbnailMediaId} ` +
+            `(from ${sourceLabel}); check [asset] logs above (size limit, WP fetch, or upload failure)`;
+          warnings.add(msg);
+          trackRef.featured_media_wp_id = String(thumbnailMediaId);
+          console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${msg}`);
         }
       } else {
         console.error(
@@ -431,24 +441,26 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         },
         bodySource,
         (msg) => console.error(`[blog] wp_id=${tRow.wp_id} body: ${msg}`),
-        async ({ attachmentId, embedUrl, purpose }) => {
-          if (attachmentId) {
-            const resolved = resolveWpVideoEntryUid({
+        async ({ attachmentId, embedUrl, providerSlug, purpose }) => {
+          try {
+            return await tryResolveVideoEntryForBody({
               attachmentId,
+              embedUrl,
+              providerSlug,
+              purpose: `Story ${tRow.wp_id} ${purpose}`,
+              cs,
               map,
               mediaSheetPath,
               locale,
               paths,
               allTracking,
+              warnings,
             });
-            if (resolved) return resolved.entryUid;
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`[blog] wp_id=${tRow.wp_id} body video FAIL: ${msg.slice(0, 200)}`);
+            return undefined;
           }
-          if (embedUrl) {
-            console.error(
-              `[blog] wp_id=${tRow.wp_id} body video skipped (${purpose}): embed URL not mapped — ${embedUrl}`
-            );
-          }
-          return undefined;
         }
       );
 

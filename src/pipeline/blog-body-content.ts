@@ -26,6 +26,7 @@ export type BodyImageResolver = (opts: {
 export type BodyVideoResolver = (opts: {
   attachmentId?: number;
   embedUrl?: string;
+  providerSlug?: string;
   purpose: string;
 }) => Promise<string | undefined>;
 
@@ -954,6 +955,7 @@ async function convertOneWpBlock(
   if (name === "core/embed" || name === "core/video") {
     const attachmentId = pickPositiveInt(normalized.attrs?.id);
     const embedUrl = pickString(normalized.attrs?.url) || pickString(normalized.attrs?.src);
+    const providerSlug = pickString(normalized.attrs?.providerNameSlug);
     if (!resolveVideo) {
       stats.skipped += 1;
       log?.(`skipped ${name}: video resolver not configured`);
@@ -962,6 +964,7 @@ async function convertOneWpBlock(
     const videoEntryUid = await resolveVideo({
       attachmentId,
       embedUrl,
+      providerSlug,
       purpose: `body video (${name})`,
     });
     if (!videoEntryUid) {

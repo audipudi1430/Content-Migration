@@ -1,7 +1,6 @@
 import type { FileRefShape } from "./blog-author-config.js";
 import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
 import type { BlogReferenceShape } from "./blog-config.js";
-import { loadBlogReferenceShape } from "./blog-config.js";
 
 /**
  * Body Content global field on `blog` — references global `modular_body`.
@@ -47,6 +46,12 @@ export function loadBlogVideoRefContentTypeUid(): string {
   return process.env.BLOG_BODY_VIDEO_REF_CONTENT_TYPE?.trim() || process.env.CS_CONTENT_TYPE_VIDEO?.trim() || "video";
 }
 
+/** Single-reference field inside `video_audio` modular block (default `object`). */
+export function loadBlogVideoReferenceShape(): BlogReferenceShape {
+  const raw = (process.env.BLOG_BODY_VIDEO_REFERENCE_SHAPE ?? "object").toLowerCase();
+  return raw === "array" ? "array" : "object";
+}
+
 export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
   const headingMax = Number(process.env.BLOG_BODY_HEADING_GROUP_MAX_LEVEL ?? "2");
   return {
@@ -71,7 +76,7 @@ export function loadBlogBodyBlockUids(): BlogBodyBlockUids {
       blockUid: process.env.BLOG_BODY_BLOCK_VIDEO_AUDIO ?? "video_audio",
       video: process.env.BLOG_BODY_VIDEO_FIELD ?? "video",
       refContentTypeUid: loadBlogVideoRefContentTypeUid(),
-      referenceShape: loadBlogReferenceShape(),
+      referenceShape: loadBlogVideoReferenceShape(),
     },
     fileRefShape: loadBlogAuthorFileRefShape(),
   };
