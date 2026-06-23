@@ -42,20 +42,16 @@ export type BodyContentBuildResult = {
   };
 };
 
-function imageCaptionValue(html: string): string {
-  return stripUnsafeHtml(decodeHtmlEntities(html)).trim();
-}
-
 function imageBlockPayload(
   uids: BlogBodyBlockUids,
   assetUid: string,
-  caption?: string
+  titleTooltip?: string
 ): Record<string, unknown> {
   const fields: Record<string, unknown> = {
     [uids.image.file]: contentstackFileRefValue(assetUid, uids.fileRefShape),
   };
-  if (uids.image.caption) {
-    fields[uids.image.caption] = caption ? imageCaptionValue(caption) : "";
+  if (uids.image.titleTooltip) {
+    fields[uids.image.titleTooltip] = titleTooltip ? plainLabelText(titleTooltip) : "";
   }
   return wrapModularBlock(uids.image.blockUid, fields);
 }
@@ -90,7 +86,7 @@ function headingTextFields(
   text: string,
   _level: number
 ): { subhead: string } {
-  return { subhead: subheadHtmlValue(text) };
+  return { subhead: plainLabelText(text) };
 }
 
 function pickPositiveInt(v: unknown): number | undefined {
@@ -111,14 +107,9 @@ function stripTags(html: string): string {
   return htmlToPlainWithBreaks(html);
 }
 
-/** Plain single-line label for `group_title` (no HTML — UI applies formatting). */
+/** Plain single-line label for `group_title` and `subhead` (no HTML — UI applies formatting). */
 function plainLabelText(html: string): string {
-  return stripTags(html).replace(/\s+/g, " ").trim();
-}
-
-/** `subhead` keeps safe inline HTML (`<em>`, `<strong>`, etc.) like Contentstack prod entries. */
-function subheadHtmlValue(html: string): string {
-  return stripUnsafeHtml(html).replace(/\s+/g, " ").trim();
+  return stripTags(decodeHtmlEntities(html)).replace(/\s+/g, " ").trim();
 }
 
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -144,7 +135,7 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
   return {
     [uids.text.blockUid]: {
       [uids.text.groupTitle]: fields.groupTitle ? plainLabelText(fields.groupTitle) : "",
-      [uids.text.subhead]: fields.subhead ? subheadHtmlValue(fields.subhead) : "",
+      [uids.text.subhead]: fields.subhead ? plainLabelText(fields.subhead) : "",
       [uids.text.text]: fields.text ?? "",
     },
   };
@@ -740,11 +731,11 @@ function headingFromBlock(
   segmentCursor?: RenderedSegmentCursor
 ): { text: string; level: number } | undefined {
   let level = pickPositiveInt(block.attrs?.level) ?? 2;
-  let text = subheadHtmlValue(pickString(block.attrs?.content) || (block.innerHTML ?? ""));
+  let text = plainLabelText(pickString(block.attrs?.content) || (block.innerHTML ?? ""));
   if (!text && segmentCursor) {
     const seg = segmentCursor.take("heading");
     if (seg?.kind === "heading") {
-      text = subheadHtmlValue(seg.html);
+      text = plainLabelText(seg.html);
       level = seg.level;
     }
   }
@@ -839,7 +830,7 @@ async function convertOneWpBlock(
   if (name === "core/image") {
     const attachmentId = pickPositiveInt(normalized.attrs?.id);
     const imageUrl = pickString(normalized.attrs?.url);
-    const caption = pickString(normalized.attrs?.caption);
+    const titleTooltip = pickString(normalized.attrs?.caption);
     const assetUid = await resolveImage({
       attachmentId,
       imageUrl,
@@ -850,9 +841,9 @@ async function convertOneWpBlock(
       log?.(`skipped core/image wp attachment=${attachmentId ?? "?"} url=${imageUrl || "(none)"}`);
       return [];
     }
-    result.push(imageBlockPayload(uids, assetUid, caption || undefined));
+    result.push(imageBlockPayload(uids, assetUid, titleTooltip || undefined));
     stats.image += 1;
-    if (caption) log?.(`mapped core/image caption (${caption.length} chars)`);
+    if (titleTooltip) log?.(`mapped core/image title_tooltip (${titleTooltip.length} chars)`);
     return result;
   }
 
