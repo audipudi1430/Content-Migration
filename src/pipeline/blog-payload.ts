@@ -225,15 +225,17 @@ export function buildImagePresetPickerValue(
     preset,
   };
 
-  const out: Record<string, unknown> = {
-    ...mergePreset,
+  const mergeWithoutAsset =
+    mergePreset && typeof mergePreset === "object"
+      ? Object.fromEntries(Object.entries(mergePreset).filter(([k]) => k !== "asset"))
+      : {};
+
+  return {
+    ...mergeWithoutAsset,
     uid: assetUid,
     _content_type_uid: "sys_assets",
     metadata,
   };
-  if (presetUid) out.lookup = presetUid;
-  if (extensionUid) out.extension_uid = extensionUid;
-  return out;
 }
 
 /**
@@ -261,8 +263,11 @@ export function setThumbnailField(
     options
   );
 
+  const mergeThumb = mergeRecord(mergeThumbnail);
   entry[fields.thumbnail] = {
-    ...mergeThumbnail,
+    ...mergeThumb,
+    title_tooltip: mergeThumb?.title_tooltip ?? "",
+    type: mergeThumb?.type ?? null,
     [presetField]: presetValue,
   };
 }

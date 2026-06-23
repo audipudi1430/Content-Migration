@@ -37,6 +37,12 @@ export function isHeroMediaBlockName(name: string): boolean {
   return n === "vmware/hero" || n.endsWith("/hero") || n.includes("hero");
 }
 
+/** WordPress featured-image block (`core/post-featured-image`). */
+export function isFeaturedImageBlockName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n === "core/post-featured-image" || n === "core/featured-image";
+}
+
 /** Other media-like custom blocks that may carry `mediaId` + `focalPoint`. */
 function isMediaLikeBlockName(name: string): boolean {
   const n = name.trim().toLowerCase();
@@ -62,7 +68,8 @@ export function pickMediaIdFromBlockAttrs(attrs: Record<string, unknown>): numbe
   const fromMediaId =
     pickPositiveInt(attrs.mediaId) ??
     pickPositiveInt(attrs.media_id) ??
-    pickPositiveInt(attrs.id);
+    pickPositiveInt(attrs.id) ??
+    pickPositiveInt(attrs.featured_media);
   if (fromMediaId) return fromMediaId;
 
   const image = attrs.image;
@@ -82,12 +89,13 @@ function walkBlocksForMedia(blocks: WpContentBlock[]): BlockMediaHit[] {
     const attrs = blockAttrs(block);
     const attachmentId = pickMediaIdFromBlockAttrs(attrs);
     if (attachmentId) {
+      const isFeaturedBlock = isFeaturedImageBlockName(name);
       hits.push({
         attachmentId,
         focalPoint: pickFocalPointFromAttrs(attrs),
         source: name || "block",
         isHero: isHeroMediaBlockName(name),
-        isMediaLike: isMediaLikeBlockName(name),
+        isMediaLike: isMediaLikeBlockName(name) || isFeaturedBlock,
       });
     }
     if (block.innerBlocks?.length) {
@@ -100,14 +108,16 @@ function walkBlocksForMedia(blocks: WpContentBlock[]): BlockMediaHit[] {
 /**
  * Thumbnail image source for story migration:
  * 1. Hero block from `content.blocks` (`vmware/hero`, etc.) with optional `focalPoint`
- * 2. WordPress `featured_media`
+ * 2. WordPress `featured_media` or `core/post-featured-image` block
  * 3. Other media-like blocks, then any block with a media ID
  */
 export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryThumbnailSource | undefined {
   const blocks = extractWpContentBlocks(story);
   const hits = walkBlocksForMedia(blocks);
 
-  const heroHit = hits.find((h) => h.isHero);
+  const heroHit = hits.find(
+    (h) => isHeroMediaBlockName(h.source) && !isFeaturedImageBlockName(h.source)
+  );
   if (heroHit) {
     return {
       attachmentId: heroHit.attachmentId,
@@ -119,6 +129,15 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
   const featured = pickFeaturedMediaId(story);
   if (featured) {
     return { attachmentId: featured, source: "featured_media" };
+  }
+
+  const featuredBlockHit = hits.find((h) => isFeaturedImageBlockName(h.source));
+  if (featuredBlockHit) {
+    return {
+      attachmentId: featuredBlockHit.attachmentId,
+      focalPoint: featuredBlockHit.focalPoint,
+      source: featuredBlockHit.source,
+    };
   }
 
   const mediaHit = hits.find((h) => h.isMediaLike && !h.isHero);

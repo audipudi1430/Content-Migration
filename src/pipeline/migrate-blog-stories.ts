@@ -353,14 +353,13 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
                 thumbSource?.focalPoint ??
                 pickExistingThumbnailFocalPoint(existingThumbnail, fields),
             };
+            if (!fields.thumbnailPresetExtensionUid.trim()) {
+              warnings.add(
+                `article_image Image Preset Picker missing BLOG_THUMBNAIL_PRESET_EXTENSION_UID ` +
+                  `(source=${thumbSource?.source ?? "featured_media"})`
+              );
+            }
             if (thumbnailOptions.focalPoint) {
-              if (!fields.thumbnailPresetExtensionUid.trim()) {
-                warnings.add(
-                  `thumbnail focal-point x=${thumbnailOptions.focalPoint.x} y=${thumbnailOptions.focalPoint.y} ` +
-                    `(from ${thumbSource?.source ?? "existing entry"}) may not apply: ` +
-                    `set BLOG_THUMBNAIL_PRESET_EXTENSION_UID`
-                );
-              }
               if (!fields.thumbnailPresetUid.trim()) {
                 warnings.add(
                   `thumbnail focal-point set but BLOG_THUMBNAIL_PRESET_UID is empty; ` +
