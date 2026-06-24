@@ -26,7 +26,7 @@ async function main() {
   npm run pipeline:migrate-blog-categories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-blog-stories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
-  npm run pipeline:add-to-release -- --env=stack-a [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
+  npm run pipeline:add-to-release -- --env=stack-a [--tab=stories] [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
 
 Env (see env/.env.migration-pipeline.example):
   MIGRATION_SOURCE_WORKBOOK, MIGRATION_TRACKING_WORKBOOK, MIGRATION_TRACKING_SHEET,

@@ -39,6 +39,15 @@ function releaseItemKey(uid: string, locale: string, contentTypeUid: string): st
   return `${uid}|${locale.toLowerCase()}|${contentTypeUid}`;
 }
 
+function resolveReleaseTab(argv: string[]): string {
+  return (
+    stringArg(argv, "--tab")?.trim() ||
+    process.env.RELEASE_TAB?.trim() ||
+    process.env.MIGRATION_START_SHEET?.trim() ||
+    ""
+  );
+}
+
 export async function runAddToReleaseFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const paths = loadPipelinePaths();
@@ -59,6 +68,7 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
     "Pass";
   const updateToLatest = process.env.CONTENTSTACK_RELEASE_UPDATE_TO_LATEST !== "0";
   const skipExisting = process.env.CONTENTSTACK_RELEASE_SKIP_EXISTING !== "0";
+  const tabFilter = resolveReleaseTab(argv);
   const limit =
     numberArg(argv, "--limit") ?? (Number(process.env.RELEASE_LIMIT ?? "5000") || 5000);
 
@@ -75,11 +85,17 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
       r.migration_status === migrationStatusFilter &&
       Boolean(r.contentstack_entry_uid?.trim())
   );
+  if (tabFilter) {
+    targets = targets.filter((r) => r.source_sheet === tabFilter);
+    console.error(`[release] Tab filter: source_sheet="${tabFilter}" (${targets.length} row(s) before limit).`);
+  }
   targets = targets.slice(0, Math.max(1, limit));
 
   if (targets.length === 0) {
     console.error(
-      `[release] No tracking rows matched (migration_status=${migrationStatusFilter}, has entry uid).`
+      `[release] No tracking rows matched (migration_status=${migrationStatusFilter}, has entry uid` +
+        (tabFilter ? `, tab=${tabFilter}` : "") +
+        ")."
     );
     await closeMongo();
     return;
