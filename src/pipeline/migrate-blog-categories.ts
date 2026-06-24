@@ -271,11 +271,7 @@ async function linkSubCategoriesIfEnabled(
 export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "BLOG_CATEGORY_TRACK");
-  if (parseUpdateFlag(argv, "BLOG_CATEGORY_UPDATE")) {
-    console.error(
-      "[migrate-blog-categories] --update is ignored: category migration is create-only and never updates existing entries."
-    );
-  }
+  const updateExisting = parseUpdateFlag(argv, "BLOG_CATEGORY_UPDATE");
   const paths = loadPipelinePaths();
   const contentTypeUid = loadBlogCategoryContentTypeUid();
   if (!contentTypeUid) {
@@ -300,13 +296,17 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
   const locale = process.env.CONTENTSTACK_LOCALE;
   const folderUid = await ensureAssetFolderUid(map, cs);
 
+  if (updateExisting) {
+    console.error("[migrate-blog-categories] --update: will PUT existing entries when UID is known.");
+  }
+
   const allTracking = loadAllTracking(paths);
   const selected = selectCategoryContentRows(
     allTracking,
     paths.migrateStartSheet,
     sel.mode as SelectionMode,
     sel,
-    false
+    updateExisting
   );
 
   if (selected.length === 0) {
@@ -353,11 +353,13 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         existingUid = resolveExistingEntryUid(mapRecord, trackRef);
       }
 
-      assertCreateOnlyNoExistingEntry({
-        wpId: sheetOnly ? 0 : wpId,
-        existingUid,
-        entityLabel: "blog_category",
-      });
+      if (!updateExisting && existingUid) {
+        assertCreateOnlyNoExistingEntry({
+          wpId: sheetOnly ? 0 : wpId,
+          existingUid,
+          entityLabel: "blog_category",
+        });
+      }
 
       if (!sheetOnly) {
         const rel = `${restBase.replace(/^\//, "")}/${wpId}`;
@@ -367,6 +369,18 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         console.error(
           `[blog-category] wp_id=0 sheet-only create name="${term.name}" slug=${term.slug} new_url=${trackRef.new_url || "(none)"}`
         );
+      }
+
+      let existingEntry: Record<string, unknown> | undefined;
+      if (existingUid) {
+        try {
+          existingEntry = (await cs.getEntry(contentTypeUid, existingUid, locale)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          existingEntry = undefined;
+        }
       }
 
       const { payload: entryPayload, slug } = await buildBlogCategoryEntryPayload({
@@ -382,8 +396,14 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         allTracking,
         trackRef,
         warnings,
-        existingEntry: undefined,
+        existingEntry,
       });
+
+      if (updateExisting && !existingUid) {
+        throw new Error(
+          "No Contentstack entry UID in map or tracking; run migrate without --update first"
+        );
+      }
 
       const logCtx = { wpId: sheetOnly ? 0 : wpId, entity: "blog-category" };
       const { uid: entryUid, warning: upsertWarning } = await upsertContentstackEntryWithSeoFallback({
@@ -391,6 +411,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         contentTypeUid,
         payload: entryPayload as { title: string },
         locale,
+        existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
         fileImageFields: {
           categoryThumbnail: fields.categoryThumbnail,
@@ -400,7 +421,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
-        resolveDuplicateTitle: false,
+        resolveDuplicateTitle: !updateExisting,
         retrySeoPageUrl: false,
         retryImageSizeErrors: true,
       });
@@ -409,11 +430,17 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
       if (imageWarnings) {
         console.error(`[blog-category] wp_id=${tRow.wp_id} image size warnings: ${imageWarnings}`);
       }
-      trackRef.migration_message = mergeMigrationMessages(imageWarnings, upsertWarning);
+      trackRef.migration_message = mergeMigrationMessages(
+        imageWarnings,
+        upsertWarning,
+        updateExisting ? "Updated from WordPress (--update)" : undefined
+      );
       if (upsertWarning) {
         console.error(`[blog-category] wp_id=${tRow.wp_id} WARNING: ${upsertWarning}`);
       }
-      console.error(`[blog-category] wp_id=${tRow.wp_id} CREATED entry ${entryUid}`);
+      console.error(
+        `[blog-category] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
+      );
 
       map.set({
         wpId: sheetOnly ? 0 : wpId,

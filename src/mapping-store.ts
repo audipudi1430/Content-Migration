@@ -69,9 +69,7 @@ export class MappingStore {
     console.error('Loading map from:', filePath);
     try {
       const raw = await readFile(filePath, "utf8");
-      console.error('File exists, reading...');
       const parsed = JSON.parse(raw) as MigrationMapFile;
-      console.error('Parsed data:', JSON.stringify(parsed, null, 2));
       if (parsed.version !== 1 || !parsed.records) {
         throw new Error("Invalid migration map file");
       }
@@ -90,7 +88,6 @@ export class MappingStore {
 
   async save(): Promise<void> {
     console.error('Saving map to:', this.path);
-    console.error('Data to save:', JSON.stringify(this.data, null, 2));
     this.data.updatedAt = new Date().toISOString();
     await writeFile(this.path, JSON.stringify(this.data, null, 2), "utf8");
     console.error('Saved map');
@@ -119,9 +116,7 @@ export class MappingStore {
   }
 
   getWpMediaAssetFolderUid(): string | undefined {
-    const uid = this.data.state?.wpMediaAssetFolderUid;
-    console.error('getWpMediaAssetFolderUid:', uid);
-    return uid;
+    return this.data.state?.wpMediaAssetFolderUid;
   }
 
   setWpMediaAssetFolderUid(uid: string): void {

@@ -275,11 +275,7 @@ function resolveExistingEntryUid(
 export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "BLOG_AUTHOR_TRACK");
-  if (parseUpdateFlag(argv, "BLOG_AUTHOR_UPDATE")) {
-    console.error(
-      "[migrate-blog-authors] --update is ignored: author migration is create-only and never updates existing entries."
-    );
-  }
+  const updateExisting = parseUpdateFlag(argv, "BLOG_AUTHOR_UPDATE");
   const paths = loadPipelinePaths();
   const contentTypeUid = loadBlogAuthorContentTypeUid();
   if (!contentTypeUid) {
@@ -310,13 +306,17 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     );
   }
 
+  if (updateExisting) {
+    console.error("[migrate-blog-authors] --update: will PUT existing Contentstack entries when UID is known.");
+  }
+
   const allTracking = loadAllTracking(paths);
   const selected = selectContentRows(
     allTracking,
     paths.migrateStartSheet,
     sel.mode as SelectionMode,
     sel,
-    false
+    updateExisting
   );
 
   if (selected.length === 0) {
@@ -339,11 +339,14 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     try {
       const mapRecord = map.get("story_author", tRow.wp_id, locale);
       const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
-      assertCreateOnlyNoExistingEntry({
-        wpId: tRow.wp_id,
-        existingUid,
-        entityLabel: "blog_author",
-      });
+
+      if (!updateExisting && existingUid) {
+        assertCreateOnlyNoExistingEntry({
+          wpId: tRow.wp_id,
+          existingUid,
+          entityLabel: "blog_author",
+        });
+      }
 
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
@@ -354,6 +357,18 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
           `downloadable_image_id=${pickString(term.meta?.downloadable_image_id)} ` +
           `featured_media=${term.featured_media ?? "(none)"}`
       );
+
+      let existingEntry: Record<string, unknown> | undefined;
+      if (existingUid) {
+        try {
+          existingEntry = (await cs.getEntry(contentTypeUid, existingUid, locale)) as Record<
+            string,
+            unknown
+          >;
+        } catch {
+          existingEntry = undefined;
+        }
+      }
 
       const { payload: entryPayload, slug } = await buildBlogAuthorEntryPayload({
         term,
@@ -368,8 +383,14 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         allTracking,
         trackRef,
         warnings,
-        existingEntry: undefined,
+        existingEntry,
       });
+
+      if (updateExisting && !existingUid) {
+        throw new Error(
+          "No Contentstack entry UID in map or tracking; run migrate without --update first, or set contentstack_entry_uid on the row"
+        );
+      }
 
       const logCtx = { wpId: tRow.wp_id, entity: "blog-author" };
       const { uid: entryUid, warning: upsertWarning } = await upsertContentstackEntryWithSeoFallback({
@@ -377,6 +398,7 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         contentTypeUid,
         payload: entryPayload as { title: string },
         locale,
+        existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
         fileImageFields: {
           authorImage: fields.authorImage,
@@ -386,7 +408,7 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
-        resolveDuplicateTitle: false,
+        resolveDuplicateTitle: !updateExisting,
         retrySeoPageUrl: false,
         retryImageSizeErrors: true,
       });
@@ -398,7 +420,14 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       if (upsertWarning) {
         console.error(`[blog-author] wp_id=${tRow.wp_id} WARNING: ${upsertWarning}`);
       }
-      trackRef.migration_message = mergeMigrationMessages(imageWarnings, upsertWarning);
+      trackRef.migration_message = mergeMigrationMessages(
+        imageWarnings,
+        upsertWarning,
+        updateExisting ? "Updated from WordPress (--update)" : undefined
+      );
+      console.error(
+        `[blog-author] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
+      );
 
       map.set({
         wpId: tRow.wp_id,
