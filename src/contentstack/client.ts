@@ -348,6 +348,32 @@ export class ContentstackManagementClient {
     return created.uid;
   }
 
+  async listReleaseItems(
+    releaseUid: string
+  ): Promise<{ uid: string; locale: string; content_type_uid: string; version?: number }[]> {
+    const url = `${this.base()}/releases/${encodeURIComponent(releaseUid)}/items`;
+    const res = await fetch(url, { headers: this.releaseHeaders() });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} GET release items: ${text.slice(0, 800)}`);
+    const json = JSON.parse(text) as {
+      items?: { uid?: string; locale?: string; content_type_uid?: string; version?: number }[];
+    };
+    const out: { uid: string; locale: string; content_type_uid: string; version?: number }[] = [];
+    for (const item of json.items ?? []) {
+      const uid = item.uid?.trim();
+      const loc = item.locale?.trim();
+      const ct = item.content_type_uid?.trim();
+      if (!uid || !loc || !ct) continue;
+      out.push({
+        uid,
+        locale: loc,
+        content_type_uid: ct,
+        version: typeof item.version === "number" ? item.version : undefined,
+      });
+    }
+    return out;
+  }
+
   async addItemsToRelease(
     releaseUid: string,
     items: {

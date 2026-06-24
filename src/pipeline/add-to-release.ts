@@ -35,6 +35,10 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+function releaseItemKey(uid: string, locale: string, contentTypeUid: string): string {
+  return `${uid}|${locale.toLowerCase()}|${contentTypeUid}`;
+}
+
 export async function runAddToReleaseFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const paths = loadPipelinePaths();
@@ -54,6 +58,7 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
     process.env.RELEASE_FILTER_MIGRATION_STATUS ??
     "Pass";
   const updateToLatest = process.env.CONTENTSTACK_RELEASE_UPDATE_TO_LATEST !== "0";
+  const skipExisting = process.env.CONTENTSTACK_RELEASE_SKIP_EXISTING !== "0";
   const limit =
     numberArg(argv, "--limit") ?? (Number(process.env.RELEASE_LIMIT ?? "5000") || 5000);
 
@@ -86,6 +91,14 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
   const releaseUid = await cs.ensureRelease(releaseName, createIfMissing);
   console.error(`[release] Using release uid=${releaseUid} name="${releaseName}"`);
 
+  const existingInRelease = skipExisting ? await cs.listReleaseItems(releaseUid) : [];
+  const existingKeys = new Set(
+    existingInRelease.map((i) => releaseItemKey(i.uid, i.locale, i.content_type_uid))
+  );
+  if (skipExisting && existingKeys.size > 0) {
+    console.error(`[release] ${existingKeys.size} item(s) already in release; duplicates will be skipped.`);
+  }
+
   type PendingItem = {
     row: TrackingRow;
     contentTypeUid: string;
@@ -114,8 +127,32 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
     return;
   }
 
+  const toAdd = skipExisting
+    ? pending.filter(
+        (p) => !existingKeys.has(releaseItemKey(p.entryUid, locale, p.contentTypeUid))
+      )
+    : pending;
+  const skipped = pending.length - toAdd.length;
+  if (skipped > 0) {
+    console.error(`[release] Skipping ${skipped} entry/entries already in release.`);
+  }
+  if (toAdd.length === 0) {
+    console.error("[release] All matched entries are already in the release.");
+    if (updateToLatest) {
+      try {
+        await cs.updateReleaseItemsToLatest(releaseUid);
+        console.error("[release] Updated all release items to their latest versions.");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message.slice(0, 400) : String(e);
+        console.error(`[release] update_items warning: ${msg}`);
+      }
+    }
+    await closeMongo();
+    return;
+  }
+
   let added = 0;
-  const batches = chunk(pending, RELEASE_ITEMS_BATCH_SIZE);
+  const batches = chunk(toAdd, RELEASE_ITEMS_BATCH_SIZE);
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i]!;
     try {
@@ -131,7 +168,7 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
       );
       added += batch.length;
       console.error(
-        `[release] Batch ${i + 1}/${batches.length}: added ${batch.length} item(s) (total ${added}/${pending.length})`
+        `[release] Batch ${i + 1}/${batches.length}: added ${batch.length} item(s) (total ${added}/${toAdd.length})`
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 800) : String(e);
@@ -144,7 +181,7 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
     }
   }
 
-  if (updateToLatest && added > 0) {
+  if (updateToLatest && (added > 0 || skipped > 0)) {
     try {
       await cs.updateReleaseItemsToLatest(releaseUid);
       console.error("[release] Updated all release items to their latest versions.");
@@ -156,6 +193,6 @@ export async function runAddToReleaseFromTracking(argv: string[]): Promise<void>
 
   await closeMongo();
   console.error(
-    `[release] Completed: ${added}/${pending.length} entries added to "${releaseName}" (action=${action}).`
+    `[release] Completed: ${added} added, ${skipped} already in release, ${pending.length} matched from tracking (action=${action}).`
   );
 }
