@@ -190,6 +190,6 @@ export async function tryResolveWpImageAssetUid(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[asset] wp_id=${attachmentId} ${opts.purpose} FAIL: ${msg.slice(0, 200)}`);
-    return undefined;
+    throw e;
   }
 }

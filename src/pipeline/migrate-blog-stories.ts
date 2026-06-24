@@ -380,16 +380,16 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           }
           trackRef.featured_media_wp_id = String(thumbnailMediaId);
           trackRef.contentstack_asset_uid = assetUid;
-        } else {
-          const imageField =
-            featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail;
-          const sourceLabel = thumbSource?.source ?? "featured_media";
-          const msg =
-            `${imageField} omitted: could not resolve WordPress media ${thumbnailMediaId} ` +
-            `(from ${sourceLabel}); check [asset] logs above (size limit, WP fetch, or upload failure)`;
-          warnings.add(msg);
+        } else if (warnings.hasSizeSkipFor(thumbnailMediaId)) {
           trackRef.featured_media_wp_id = String(thumbnailMediaId);
-          console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${msg}`);
+          console.error(
+            `[blog] wp_id=${tRow.wp_id} WARNING: ${featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail} omitted (image size limit)`
+          );
+        } else {
+          throw new Error(
+            `${featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail} ` +
+              `could not resolve WordPress media ${thumbnailMediaId} (from ${thumbSource?.source ?? "featured_media"})`
+          );
         }
       } else {
         console.error(
@@ -401,42 +401,37 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         story,
         bodyUids,
         async ({ attachmentId, imageUrl, purpose }) => {
-          try {
-            if (attachmentId) {
-              const resolved = await tryResolveWpImageAssetUid({
-                attachmentId,
-                wp,
-                cs,
-                map,
-                mediaSheetPath,
-                folderUid,
-                locale,
-                purpose: `Story ${tRow.wp_id} ${purpose}`,
-                paths,
-                allTracking,
-                warnings,
-              });
-              return resolved?.assetUid;
-            }
-            if (imageUrl) {
-              const resolved = await tryResolveWpImageAssetFromUrl({
-                imageUrl,
-                wp,
-                cs,
-                map,
-                mediaSheetPath,
-                folderUid,
-                locale,
-                purpose: `Story ${tRow.wp_id} ${purpose}`,
-                paths,
-                allTracking,
-                warnings,
-              });
-              return resolved?.assetUid;
-            }
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            console.error(`[blog] wp_id=${tRow.wp_id} body image FAIL: ${msg.slice(0, 200)}`);
+          if (attachmentId) {
+            const resolved = await tryResolveWpImageAssetUid({
+              attachmentId,
+              wp,
+              cs,
+              map,
+              mediaSheetPath,
+              folderUid,
+              locale,
+              purpose: `Story ${tRow.wp_id} ${purpose}`,
+              paths,
+              allTracking,
+              warnings,
+            });
+            return resolved?.assetUid;
+          }
+          if (imageUrl) {
+            const resolved = await tryResolveWpImageAssetFromUrl({
+              imageUrl,
+              wp,
+              cs,
+              map,
+              mediaSheetPath,
+              folderUid,
+              locale,
+              purpose: `Story ${tRow.wp_id} ${purpose}`,
+              paths,
+              allTracking,
+              warnings,
+            });
+            return resolved?.assetUid;
           }
           return undefined;
         },
@@ -490,6 +485,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
       let metaImageAssetUid: string | undefined;
       if (ogImageUrl) {
+        const warnBefore = warnings.count;
         const resolved = await tryResolveWpImageAssetFromUrl({
           imageUrl: ogImageUrl,
           wp,
@@ -506,8 +502,12 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         if (resolved) {
           metaImageAssetUid = resolved.assetUid;
           trackRef.contentstack_asset_uid = resolved.assetUid;
+        } else if (warnings.count > warnBefore) {
+          console.error(
+            `[blog] wp_id=${tRow.wp_id} WARNING: seo.meta_image omitted (image size limit)`
+          );
         } else {
-          console.error(`[blog] wp_id=${tRow.wp_id} og_image not resolved: ${ogImageUrl}`);
+          throw new Error(`seo.meta_image: og_image not resolved (${ogImageUrl})`);
         }
       }
 
@@ -582,6 +582,10 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           seoSocialGroup: fields.seoSocialGroup,
           metaImageGroup: fields.metaImageGroup,
           metaImageFileField: fields.metaImageFileField,
+          modularBodyFieldUid: bodyUids.fieldUid,
+          modularBlocksFieldUid: bodyUids.modularBlocksFieldUid,
+          modularBodyImageBlockUid: bodyUids.image.blockUid,
+          modularBodyImageFileField: bodyUids.image.file,
         },
         logContext: logCtx,
         resolveDuplicateTitle: true,

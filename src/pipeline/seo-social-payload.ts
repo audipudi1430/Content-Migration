@@ -250,6 +250,20 @@ export function isInvalidFileUploadError(message: string): boolean {
   );
 }
 
+/** CMA validation on image/file fields we can omit and retry (includes body modular images). */
+export function isRecoverableImageValidationError(message: string): boolean {
+  if (isInvalidFileUploadError(message)) return true;
+  const parsed = parseCmaEntryErrorJson(message);
+  if (!parsed?.errors) return false;
+  return Object.entries(parsed.errors).some(([path, details]) => {
+    const detail = details.join(" ");
+    if (isInvalidFileUploadError(detail)) return true;
+    return /(?:^|\.)(file|image|meta_image|article_image|banner_image|category_thumbnail|author_image|modular_blocks\.\d+\.image)/i.test(
+      path
+    );
+  });
+}
+
 export type EntryFileImageFieldUids = {
   bannerImage?: string;
   bannerImageFileField?: string;
@@ -258,9 +272,15 @@ export type EntryFileImageFieldUids = {
   thumbnailPresetImageField?: string;
   authorImage?: string;
   authorImageFileField?: string;
+  categoryThumbnail?: string;
+  categoryThumbnailFileField?: string;
   seoSocialGroup?: string;
   metaImageGroup?: string;
   metaImageFileField?: string;
+  modularBodyFieldUid?: string;
+  modularBlocksFieldUid?: string;
+  modularBodyImageBlockUid?: string;
+  modularBodyImageFileField?: string;
 };
 
 /** Parse CMA JSON body embedded in `Contentstack NNN POST entry: {...}` errors. */
@@ -289,6 +309,17 @@ export function omitEntryFileImageFields(
       copy[fields.authorImage] = next;
     } else {
       delete copy[fields.authorImage];
+    }
+  }
+
+  if (fields.categoryThumbnail && fields.categoryThumbnailFileField) {
+    const thumb = copy[fields.categoryThumbnail];
+    if (thumb && typeof thumb === "object" && !Array.isArray(thumb)) {
+      const next = { ...(thumb as Record<string, unknown>) };
+      delete next[fields.categoryThumbnailFileField];
+      copy[fields.categoryThumbnail] = next;
+    } else {
+      delete copy[fields.categoryThumbnail];
     }
   }
 
@@ -344,6 +375,122 @@ export function omitEntryFileImageFields(
   }
 
   return copy;
+}
+
+function parseModularBlockIndexFromErrorPath(
+  path: string,
+  blocksFieldUid: string
+): number | undefined {
+  const escaped = blocksFieldUid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(?:^|\\.)${escaped}\\.(\\d+)\\.`, "i");
+  const m = path.match(re);
+  if (!m?.[1]) return undefined;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
+
+function omitModularBodyImageFilesAtIndices(
+  payload: Record<string, unknown>,
+  fields: EntryFileImageFieldUids,
+  indices: number[]
+): string[] {
+  const bodyUid = fields.modularBodyFieldUid;
+  const blocksUid = fields.modularBlocksFieldUid;
+  if (!bodyUid || !blocksUid || indices.length === 0) return [];
+
+  const body = payload[bodyUid];
+  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+  const blocksRaw = (body as Record<string, unknown>)[blocksUid];
+  if (!Array.isArray(blocksRaw)) return [];
+
+  const imageBlockUid = fields.modularBodyImageBlockUid ?? "image";
+  const fileField = fields.modularBodyImageFileField ?? "file";
+  const omitted: string[] = [];
+  const nextBlocks = blocksRaw.map((block, idx) => {
+    if (!indices.includes(idx) || !block || typeof block !== "object" || Array.isArray(block)) {
+      return block;
+    }
+    const blockObj = block as Record<string, unknown>;
+    const imageBlock = blockObj[imageBlockUid];
+    if (!imageBlock || typeof imageBlock !== "object" || Array.isArray(imageBlock)) {
+      return block;
+    }
+    const nextImage = { ...(imageBlock as Record<string, unknown>) };
+    delete nextImage[fileField];
+    delete nextImage.uid;
+    omitted.push(`${bodyUid}.${blocksUid}.${idx}.${imageBlockUid}.${fileField}`);
+    return { ...blockObj, [imageBlockUid]: nextImage };
+  });
+
+  payload[bodyUid] = { ...(body as Record<string, unknown>), [blocksUid]: nextBlocks };
+  return omitted;
+}
+
+function omitAllModularBodyImageFiles(
+  payload: Record<string, unknown>,
+  fields: EntryFileImageFieldUids
+): string[] {
+  const bodyUid = fields.modularBodyFieldUid;
+  const blocksUid = fields.modularBlocksFieldUid;
+  if (!bodyUid || !blocksUid) return [];
+  const body = payload[bodyUid];
+  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+  const blocksRaw = (body as Record<string, unknown>)[blocksUid];
+  if (!Array.isArray(blocksRaw)) return [];
+  return omitModularBodyImageFilesAtIndices(
+    payload,
+    fields,
+    blocksRaw.map((_, i) => i)
+  );
+}
+
+/** Omit image fields referenced in CMA error paths (top-level + modular body blocks). */
+export function omitEntryImageFieldsForErrorPaths(
+  payload: Record<string, unknown>,
+  fields: EntryFileImageFieldUids,
+  errorPaths: string[]
+): { payload: Record<string, unknown>; omittedPaths: string[] } {
+  const copy = { ...payload };
+  const omittedPaths: string[] = [];
+
+  if (fields.modularBlocksFieldUid) {
+    const blockIndices = [
+      ...new Set(
+        errorPaths
+          .map((p) => parseModularBlockIndexFromErrorPath(p, fields.modularBlocksFieldUid!))
+          .filter((n): n is number => n !== undefined)
+      ),
+    ];
+    if (blockIndices.length > 0) {
+      omittedPaths.push(...omitModularBodyImageFilesAtIndices(copy, fields, blockIndices));
+    }
+  }
+
+  const topLevelImageError = errorPaths.some((p) =>
+    /banner_image|article_image|thumbnail|author_image|category_thumbnail|meta_image|\.file/i.test(p)
+  );
+  if (topLevelImageError || errorPaths.some((p) => isInvalidFileUploadError(p))) {
+    const stripped = omitEntryFileImageFields(copy, fields);
+    Object.assign(copy, stripped);
+    for (const p of errorPaths) {
+      if (!p.includes("modular_blocks")) omittedPaths.push(p);
+    }
+  }
+
+  return { payload: copy, omittedPaths: [...new Set(omittedPaths)] };
+}
+
+/** Remove all known image refs (hero, SEO meta, modular body images) for a last-resort retry. */
+export function omitAllEntryImageFields(
+  payload: Record<string, unknown>,
+  fields: EntryFileImageFieldUids
+): { payload: Record<string, unknown>; omittedPaths: string[] } {
+  const copy = omitEntryFileImageFields(payload, fields);
+  const omittedPaths = omitAllModularBodyImageFiles(copy, fields);
+  if (omittedPaths.length === 0 && fields.modularBodyFieldUid) {
+    omittedPaths.push(`${fields.modularBodyFieldUid} (all body image files)`);
+  }
+  return { payload: copy, omittedPaths };
 }
 
 /** Remove `page_url` from the seo global so a retry can succeed. */

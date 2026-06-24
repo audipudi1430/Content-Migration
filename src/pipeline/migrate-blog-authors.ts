@@ -23,8 +23,9 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup } from "./seo-social-payload.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
+import { assertCreateOnlyNoExistingEntry } from "./create-only-entry.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
-import { resolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import { normalizeWpText } from "./contentstack-rte.js";
 import type { PipelinePathsConfig } from "../config-pipeline.js";
@@ -176,19 +177,21 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   );
 
   if (avatarId) {
-    try {
-      const { assetUid, source } = await resolveWpImageAssetUid({
-        attachmentId: avatarId,
-        wp: ctx.wp,
-        cs: ctx.cs,
-        map: ctx.map,
-        mediaSheetPath: ctx.mediaSheetPath,
-        folderUid: ctx.folderUid,
-        locale: ctx.locale,
-        purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
-        paths: ctx.paths,
-        allTracking: ctx.allTracking,
-      });
+    const resolved = await tryResolveWpImageAssetUid({
+      attachmentId: avatarId,
+      wp: ctx.wp,
+      cs: ctx.cs,
+      map: ctx.map,
+      mediaSheetPath: ctx.mediaSheetPath,
+      folderUid: ctx.folderUid,
+      locale: ctx.locale,
+      purpose: `Author ${term.id} avatar (meta.avatar_image_id)`,
+      paths: ctx.paths,
+      allTracking: ctx.allTracking,
+      warnings: ctx.warnings,
+    });
+    if (resolved) {
+      const { assetUid, source } = resolved;
       const existingAuthorImage =
         ctx.existingEntry?.[fields.authorImage] &&
         typeof ctx.existingEntry[fields.authorImage] === "object" &&
@@ -203,10 +206,13 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
           `fileField=${fields.authorImageFileField} assetUid=${assetUid} source=${source} ` +
           `payload=${JSON.stringify(entryPayload[fields.authorImage])}`
       );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      warnings.add(`author_image: ${msg.slice(0, 300)}`);
-      console.error(`[blog-author] wp_id=${term.id} author_image FAIL: ${msg.slice(0, 200)}`);
+    } else if (!ctx.warnings.hasSizeSkipFor(avatarId)) {
+      throw new Error(`author_image: could not resolve WordPress media ${avatarId}`);
+    } else {
+      trackRef.featured_media_wp_id = String(avatarId);
+      console.error(
+        `[blog-author] wp_id=${term.id} WARNING: author_image omitted (image size limit); see migration_message`
+      );
     }
   } else {
     console.error(
@@ -216,19 +222,21 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   }
 
   if (metaImageId && metaImageId !== avatarId) {
-    try {
-      const { assetUid, source } = await resolveWpImageAssetUid({
-        attachmentId: metaImageId,
-        wp: ctx.wp,
-        cs: ctx.cs,
-        map: ctx.map,
-        mediaSheetPath: ctx.mediaSheetPath,
-        folderUid: ctx.folderUid,
-        locale: ctx.locale,
-        purpose: `Author ${term.id} meta image (meta.downloadable_image_id)`,
-        paths: ctx.paths,
-        allTracking: ctx.allTracking,
-      });
+    const resolved = await tryResolveWpImageAssetUid({
+      attachmentId: metaImageId,
+      wp: ctx.wp,
+      cs: ctx.cs,
+      map: ctx.map,
+      mediaSheetPath: ctx.mediaSheetPath,
+      folderUid: ctx.folderUid,
+      locale: ctx.locale,
+      purpose: `Author ${term.id} meta image (meta.downloadable_image_id)`,
+      paths: ctx.paths,
+      allTracking: ctx.allTracking,
+      warnings: ctx.warnings,
+    });
+    if (resolved) {
+      const { assetUid, source } = resolved;
       const seoGroup = entryPayload[fields.seoSocialGroup];
       const seoObj =
         seoGroup && typeof seoGroup === "object" && !Array.isArray(seoGroup)
@@ -245,10 +253,12 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
         { wpId: term.id, entity: "blog-author" }
       );
       console.error(`[blog-author] wp_id=${term.id} seo.meta_image.file=${assetUid} source=${source}`);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      warnings.add(`seo.meta_image: ${msg.slice(0, 300)}`);
-      console.error(`[blog-author] wp_id=${term.id} seo.meta_image FAIL: ${msg.slice(0, 200)}`);
+    } else if (!ctx.warnings.hasSizeSkipFor(metaImageId)) {
+      throw new Error(`seo.meta_image: could not resolve WordPress media ${metaImageId}`);
+    } else {
+      console.error(
+        `[blog-author] wp_id=${term.id} WARNING: seo.meta_image omitted (image size limit); see migration_message`
+      );
     }
   }
 
@@ -265,7 +275,11 @@ function resolveExistingEntryUid(
 export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
   const sel = parseSelection(argv, "BLOG_AUTHOR_TRACK");
-  const updateExisting = parseUpdateFlag(argv, "BLOG_AUTHOR_UPDATE");
+  if (parseUpdateFlag(argv, "BLOG_AUTHOR_UPDATE")) {
+    console.error(
+      "[migrate-blog-authors] --update is ignored: author migration is create-only and never updates existing entries."
+    );
+  }
   const paths = loadPipelinePaths();
   const contentTypeUid = loadBlogAuthorContentTypeUid();
   if (!contentTypeUid) {
@@ -296,17 +310,13 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     );
   }
 
-  if (updateExisting) {
-    console.error("[migrate-blog-authors] --update: will PUT existing Contentstack entries when UID is known.");
-  }
-
   const allTracking = loadAllTracking(paths);
   const selected = selectContentRows(
     allTracking,
     paths.migrateStartSheet,
     sel.mode as SelectionMode,
     sel,
-    updateExisting
+    false
   );
 
   if (selected.length === 0) {
@@ -329,23 +339,11 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
     try {
       const mapRecord = map.get("story_author", tRow.wp_id, locale);
       const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
-
-      if (!updateExisting && existingUid) {
-        trackRef.contentstack_entry_uid = existingUid;
-        trackRef.migration_status = "Pass";
-        trackRef.migration_message = "Already in JSON map (use --update to refresh from WordPress)";
-        trackRef.updated_at = new Date().toISOString();
-        trackRef.target_url = buildContentstackEntryTargetUrl({
-          apiHost: cfg.contentstack.apiHost,
-          stackApiKey: cfg.contentstack.stackApiKey,
-          contentTypeUid,
-          entryUid: existingUid,
-          locale,
-        });
-        await persistOneRow(paths, allTracking, trackRef, mongoCfg);
-        ok += 1;
-        continue;
-      }
+      assertCreateOnlyNoExistingEntry({
+        wpId: tRow.wp_id,
+        existingUid,
+        entityLabel: "blog_author",
+      });
 
       const restBase = (trackRef.wp_rest_path || paths.wpRestPath).replace(/\/$/, "");
       const rel = `${restBase.replace(/^\//, "")}/${tRow.wp_id}`;
@@ -356,15 +354,6 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
           `downloadable_image_id=${pickString(term.meta?.downloadable_image_id)} ` +
           `featured_media=${term.featured_media ?? "(none)"}`
       );
-
-      let existingEntry: Record<string, unknown> | undefined;
-      if (existingUid) {
-        try {
-          existingEntry = (await cs.getEntry(contentTypeUid, existingUid, locale)) as Record<string, unknown>;
-        } catch {
-          existingEntry = undefined;
-        }
-      }
 
       const { payload: entryPayload, slug } = await buildBlogAuthorEntryPayload({
         term,
@@ -379,14 +368,8 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         allTracking,
         trackRef,
         warnings,
-        existingEntry,
+        existingEntry: undefined,
       });
-
-      if (updateExisting && !existingUid) {
-        throw new Error(
-          "No Contentstack entry UID in map or tracking; run migrate without --update first, or set contentstack_entry_uid on the row"
-        );
-      }
 
       const logCtx = { wpId: tRow.wp_id, entity: "blog-author" };
       const { uid: entryUid, warning: upsertWarning } = await upsertContentstackEntryWithSeoFallback({
@@ -394,7 +377,6 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
         contentTypeUid,
         payload: entryPayload as { title: string },
         locale,
-        existingUid: updateExisting ? existingUid : undefined,
         seoFields: fields,
         fileImageFields: {
           authorImage: fields.authorImage,
@@ -404,21 +386,19 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
-        resolveDuplicateTitle: true,
+        resolveDuplicateTitle: false,
+        retrySeoPageUrl: false,
+        retryImageSizeErrors: true,
       });
 
       const imageWarnings = warnings.join();
       if (imageWarnings) {
-        console.error(`[blog-author] wp_id=${tRow.wp_id} image warnings: ${imageWarnings}`);
+        console.error(`[blog-author] wp_id=${tRow.wp_id} image size warnings: ${imageWarnings}`);
       }
       if (upsertWarning) {
         console.error(`[blog-author] wp_id=${tRow.wp_id} WARNING: ${upsertWarning}`);
       }
-      trackRef.migration_message = mergeMigrationMessages(
-        imageWarnings,
-        upsertWarning,
-        updateExisting ? "Updated from WordPress (--update)" : undefined
-      );
+      trackRef.migration_message = mergeMigrationMessages(imageWarnings, upsertWarning);
 
       map.set({
         wpId: tRow.wp_id,

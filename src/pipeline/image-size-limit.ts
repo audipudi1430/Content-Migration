@@ -88,6 +88,14 @@ export class MigrationWarnings {
     return this.items.join(separator);
   }
 
+  /** True when a size-limit skip was recorded for this WordPress attachment id. */
+  hasSizeSkipFor(wpId: number): boolean {
+    const id = String(wpId);
+    return this.items.some(
+      (msg) => msg.includes(`wp_id=${id}`) && /exceeds.*limit|maximum size limit/i.test(msg)
+    );
+  }
+
   get count(): number {
     return this.items.length;
   }
