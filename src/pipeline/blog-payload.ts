@@ -106,10 +106,14 @@ export type BuildBlogPayloadInput = {
   fields: BlogFieldUids;
   pageUrl: string;
   cmsTitle: string;
+  /** When set, maps only to the `headline` field (from Excel Headline column). */
+  headlineOverride?: string;
   categoryRefUids?: string[];
   categoryRefContentTypeUid: string;
   authorRefUids?: string[];
   authorRefContentTypeUid: string;
+  /** String array for `blog_topics` (from Excel L3 column). */
+  blogTopics?: string[];
   seriesRefUid?: string;
   seriesRefContentTypeUid?: string;
   selectDefaults: { showInNewsroomLanding?: string; showInLatestBlogs?: string };
@@ -127,10 +131,12 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
     fields,
     pageUrl,
     cmsTitle,
+    headlineOverride,
     categoryRefUids,
     categoryRefContentTypeUid,
     authorRefUids,
     authorRefContentTypeUid,
+    blogTopics,
     seriesRefUid,
     seriesRefContentTypeUid,
     selectDefaults,
@@ -142,18 +148,28 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
       ? (story.meta as Record<string, unknown>)
       : undefined;
 
+  const entryTitle = cmsTitle.trim() || "Untitled";
+
   const entry: Record<string, unknown> = {
-    title: cmsTitle,
+    title: entryTitle,
   };
 
-  setScalar(entry, fields.cmsAssetName, cmsTitle);
+  setScalar(entry, fields.cmsAssetName, entryTitle);
   setScalar(entry, fields.url, pageUrl);
-  setScalar(entry, fields.headline, cmsTitle);
+  setScalar(entry, fields.headline, headlineOverride?.trim() || entryTitle);
   setScalar(entry, fields.subHeader, pickMetaString(meta, metaKeys.subHeader));
-  setScalar(entry, fields.shortLinkText, cmsTitle);
+  setScalar(entry, fields.shortLinkText, entryTitle);
   setScalar(entry, fields.dateline, new Date().toISOString());
   setScalar(entry, fields.byline, pickMetaString(meta, metaKeys.byline));
-  setScalar(entry, fields.blogTopics, pickMetaString(meta, metaKeys.blogTopics));
+
+  if (blogTopics && blogTopics.length > 0) {
+    entry[fields.blogTopics] = blogTopics;
+  } else if (blogTopics && blogTopics.length === 0) {
+    /* Explicit empty L3 column — omit blog_topics */
+  } else {
+    setScalar(entry, fields.blogTopics, pickMetaString(meta, metaKeys.blogTopics));
+  }
+
   setScalar(entry, fields.showInNewsroomLanding, selectDefaults.showInNewsroomLanding);
   setScalar(entry, fields.showInLatestBlogs, selectDefaults.showInLatestBlogs);
 

@@ -56,6 +56,17 @@ import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
 import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
 import { tryResolveVideoEntryForBody } from "./ensure-video-entry.js";
+import {
+  isSheetNoneValue,
+  parseCommaSeparatedLabels,
+  parseStorySheetColumns,
+  storySheetCategoryLabels,
+  storySheetHasCategoryColumns,
+} from "./blog-story-sheet.js";
+import {
+  resolveBlogAuthorUidByName,
+  resolveBlogCategoryUidsByNames,
+} from "./resolve-entry-ref-by-name.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { buildContentstackEntryTargetUrl } from "./cs-target-url.js";
@@ -89,7 +100,8 @@ function allMappedRefs(
   wpIds: number[],
   locale: string | undefined,
   logLabel: string,
-  wpStoryId: number
+  wpStoryId: number,
+  warnings?: MigrationWarnings
 ): string[] {
   const uids: string[] = [];
   const missing: number[] = [];
@@ -99,10 +111,10 @@ function allMappedRefs(
     else missing.push(wpId);
   }
   if (missing.length > 0) {
-    console.error(
-      `[blog] wp_id=${wpStoryId} WARNING: no Contentstack mapping for ${logLabel} wp_id(s)=${missing.join(",")} ` +
-        `(run category/author migration first)`
-    );
+    const msg =
+      `no Contentstack mapping for ${logLabel} wp_id(s)=${missing.join(",")} (run category/author migration first)`;
+    warnings?.add(msg);
+    console.error(`[blog] wp_id=${wpStoryId} WARNING: ${msg}`);
   }
   return uids;
 }
@@ -242,41 +254,104 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       }
 
       const slug = pickString(story.slug) || String(tRow.wp_id);
-      const cmsTitle =
-        pickRenderedTitle(story.title) || normalizeWpText(pickString(story.name)) || `Story ${story.id ?? tRow.wp_id}`;
+      const sheetCols = parseStorySheetColumns(trackRef);
+      const wpTitle =
+        pickRenderedTitle(story.title) ||
+        normalizeWpText(pickString(story.name)) ||
+        `Story ${story.id ?? tRow.wp_id}`;
+      const cmsTitle = wpTitle;
+      const headlineFromSheet = sheetCols.headline.trim() || undefined;
+      if (headlineFromSheet) {
+        console.error(`[blog] wp_id=${tRow.wp_id} headline from sheet="${headlineFromSheet}"`);
+      }
+
       const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
         trackRef,
         blogArticlePageUrlPath(slug)
       );
       if (pageUrlSource === "fallback") {
+        warnings.add(
+          "no new_url on tracking row; using fallback url (re-run pipeline:extract after adding new url column)"
+        );
         console.error(
           `[blog] wp_id=${tRow.wp_id} WARNING: no new_url on tracking row; ` +
             `using fallback url=${pageUrl} (re-run pipeline:extract after adding new url column)`
         );
       }
 
-      const categoryWpIds = pickWpTermIds(story[wpTaxonomyCategory]);
-      const authorWpIds = pickWpTermIds(story[wpTaxonomyAuthor]);
+      let authorRefUids: string[] = [];
+      if (sheetCols.namedAuthorColumnPresent) {
+        if (!isSheetNoneValue(sheetCols.namedAuthor)) {
+          const authorUid = await resolveBlogAuthorUidByName({
+            name: sheetCols.namedAuthor,
+            cs,
+            authorContentTypeUid: authorRefContentTypeUid,
+            allTracking,
+            locale,
+            warnings,
+          });
+          if (authorUid) {
+            authorRefUids = [authorUid];
+            console.error(
+              `[blog] wp_id=${tRow.wp_id} blog_author_profile="${sheetCols.namedAuthor}" uid=${authorUid} (sheet)`
+            );
+          }
+        } else {
+          console.error(`[blog] wp_id=${tRow.wp_id} Named Author=None; blog_author_profile omitted`);
+        }
+      } else {
+        const authorWpIds = pickWpTermIds(story[wpTaxonomyAuthor]);
+        authorRefUids = allMappedRefs(
+          map,
+          "story_author",
+          authorWpIds,
+          locale,
+          wpTaxonomyAuthor,
+          tRow.wp_id,
+          warnings
+        );
+      }
 
-      const categoryRefUids = allMappedRefs(
-        map,
-        "category",
-        categoryWpIds,
-        locale,
-        wpTaxonomyCategory,
-        tRow.wp_id
-      );
-      const authorRefUids = allMappedRefs(
-        map,
-        "story_author",
-        authorWpIds,
-        locale,
-        wpTaxonomyAuthor,
-        tRow.wp_id
-      );
+      let categoryRefUids: string[] = [];
+      if (storySheetHasCategoryColumns(sheetCols)) {
+        const categoryLabels = storySheetCategoryLabels(sheetCols);
+        if (categoryLabels.length > 0) {
+          categoryRefUids = await resolveBlogCategoryUidsByNames({
+            names: categoryLabels,
+            cs,
+            categoryContentTypeUid: categoryRefContentTypeUid,
+            allTracking,
+            locale,
+            warnings,
+          });
+          console.error(
+            `[blog] wp_id=${tRow.wp_id} blog_category from sheet L1/L2/Series: ` +
+              `labels=${categoryLabels.join(" | ")} uids=${categoryRefUids.join(",") || "(none)"}`
+          );
+        }
+      } else {
+        const categoryWpIds = pickWpTermIds(story[wpTaxonomyCategory]);
+        categoryRefUids = allMappedRefs(
+          map,
+          "category",
+          categoryWpIds,
+          locale,
+          wpTaxonomyCategory,
+          tRow.wp_id,
+          warnings
+        );
+      }
+
+      let blogTopics: string[] | undefined;
+      if (sheetCols.l3ColumnPresent) {
+        blogTopics = parseCommaSeparatedLabels(sheetCols.l3);
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} blog_topics from sheet L3: ${blogTopics.length ? blogTopics.join(", ") : "(empty)"}`
+        );
+      }
 
       let seriesRefUid: string | undefined;
-      if (seriesRefContentTypeUid && metaKeys.seriesLabel) {
+      if (!sheetCols.seriesColumnPresent && seriesRefContentTypeUid && metaKeys.seriesLabel) {
         const meta =
           story.meta && typeof story.meta === "object" && !Array.isArray(story.meta)
             ? (story.meta as Record<string, unknown>)
@@ -286,6 +361,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         if (Number.isFinite(seriesWpId) && seriesWpId > 0) {
           seriesRefUid = resolveMappedRefUid(map, seriesMappingKind, Math.floor(seriesWpId), locale);
           if (!seriesRefUid) {
+            warnings.add(`series_label: no Contentstack mapping for series wp_id=${seriesWpId}`);
             console.error(
               `[blog] wp_id=${tRow.wp_id} WARNING: no Contentstack mapping for series wp_id=${seriesWpId}`
             );
@@ -298,10 +374,12 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         fields,
         pageUrl,
         cmsTitle,
+        headlineOverride: headlineFromSheet,
         categoryRefUids,
         categoryRefContentTypeUid,
         authorRefUids,
         authorRefContentTypeUid,
+        blogTopics,
         seriesRefUid,
         seriesRefContentTypeUid: seriesRefContentTypeUid || undefined,
         selectDefaults,
@@ -591,20 +669,18 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         resolveDuplicateTitle: true,
       });
 
-      const imageWarnings = warnings.join();
-      if (imageWarnings) {
-        console.error(`[blog] wp_id=${tRow.wp_id} image warnings: ${imageWarnings}`);
+      const allWarnings = warnings.join();
+      if (allWarnings) {
+        console.error(`[blog] wp_id=${tRow.wp_id} warnings: ${allWarnings}`);
       }
 
-      if (pageUrlWarning || imageWarnings) {
-        trackRef.migration_message = mergeMigrationMessages(imageWarnings, pageUrlWarning);
-        if (pageUrlWarning) {
-          console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
-        }
-      } else if (updateExisting) {
-        trackRef.migration_message = "Updated from WordPress (--update)";
-      } else {
-        trackRef.migration_message = "";
+      trackRef.migration_message = mergeMigrationMessages(
+        allWarnings,
+        pageUrlWarning,
+        updateExisting ? "Updated from WordPress (--update)" : undefined
+      );
+      if (pageUrlWarning) {
+        console.error(`[blog] wp_id=${tRow.wp_id} WARNING: ${pageUrlWarning}`);
       }
       console.error(
         `[blog] wp_id=${tRow.wp_id} ${updateExisting ? "UPDATED" : "CREATED"} entry ${entryUid}`
