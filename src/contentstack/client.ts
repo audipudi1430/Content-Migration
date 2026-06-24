@@ -267,4 +267,121 @@ export class ContentstackManagementClient {
     const text = await res.text();
     if (!res.ok) throw new Error(`Contentstack ${res.status} POST publish: ${text.slice(0, 800)}`);
   }
+
+  private branchHeaders(): Record<string, string> {
+    const branch = process.env.CONTENTSTACK_BRANCH?.trim();
+    if (!branch) return {};
+    return { branch };
+  }
+
+  private releaseHeaders(): HeadersInit {
+    const headers: Record<string, string> = {
+      ...this.authHeaders(),
+      "Content-Type": "application/json",
+      ...this.branchHeaders(),
+    };
+    const releaseVersion = process.env.CONTENTSTACK_RELEASE_VERSION?.trim();
+    if (releaseVersion) headers.release_version = releaseVersion;
+    return headers;
+  }
+
+  async listReleases(): Promise<{ uid: string; name: string }[]> {
+    const releases: { uid: string; name: string }[] = [];
+    let skip = 0;
+    const limit = 100;
+    while (true) {
+      const url = `${this.base()}/releases?limit=${limit}&skip=${skip}`;
+      const res = await fetch(url, { headers: this.releaseHeaders() });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`Contentstack ${res.status} GET releases: ${text.slice(0, 800)}`);
+      const json = JSON.parse(text) as { releases?: { uid?: string; name?: string }[] };
+      const items = json.releases ?? [];
+      for (const r of items) {
+        const uid = r.uid?.trim();
+        const name = r.name?.trim();
+        if (uid && name) releases.push({ uid, name });
+      }
+      if (items.length < limit) break;
+      skip += limit;
+    }
+    return releases;
+  }
+
+  async findReleaseUidByName(name: string): Promise<string | undefined> {
+    const target = name.trim();
+    if (!target) return undefined;
+    const releases = await this.listReleases();
+    const match = releases.find((r) => r.name === target);
+    return match?.uid;
+  }
+
+  async createRelease(name: string, description?: string): Promise<{ uid: string }> {
+    const body = {
+      release: {
+        name: name.trim(),
+        description: description?.trim() || "",
+        locked: false,
+        archived: false,
+      },
+    };
+    const res = await fetch(`${this.base()}/releases`, {
+      method: "POST",
+      headers: this.releaseHeaders(),
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`Contentstack ${res.status} POST release: ${text.slice(0, 800)}`);
+    const json = JSON.parse(text) as { release?: { uid?: string } };
+    const uid = json.release?.uid?.trim();
+    if (!uid) throw new Error(`Contentstack create release missing uid: ${text.slice(0, 800)}`);
+    return { uid };
+  }
+
+  /** Find an existing release by name or create one when `createIfMissing` is true. */
+  async ensureRelease(name: string, createIfMissing = true): Promise<string> {
+    const existing = await this.findReleaseUidByName(name);
+    if (existing) return existing;
+    if (!createIfMissing) {
+      throw new Error(`Release not found: "${name}" (set CONTENTSTACK_RELEASE_CREATE=1 to create)`);
+    }
+    const created = await this.createRelease(name);
+    return created.uid;
+  }
+
+  async addItemsToRelease(
+    releaseUid: string,
+    items: {
+      uid: string;
+      version: number;
+      locale: string;
+      content_type_uid: string;
+      action: "publish" | "unpublish";
+    }[]
+  ): Promise<void> {
+    if (items.length === 0) return;
+    const url = `${this.base()}/releases/${encodeURIComponent(releaseUid)}/items`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: this.releaseHeaders(),
+      body: JSON.stringify({ items }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} POST release items: ${text.slice(0, 800)}`);
+    }
+  }
+
+  /** Pin all release items to their latest entry/asset versions before deploy. */
+  async updateReleaseItemsToLatest(releaseUid: string): Promise<void> {
+    const url = `${this.base()}/releases/${encodeURIComponent(releaseUid)}/update_items`;
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: this.releaseHeaders(),
+      body: JSON.stringify({ items: ["$all"] }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} PUT release update_items: ${text.slice(0, 800)}`);
+    }
+  }
 }

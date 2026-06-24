@@ -11,7 +11,11 @@
  */
 
 import type { SeoPageUrlShape } from "./seo-social-payload.js";
-import { loadSharedSeoPageUrlFields, resolveSeoPageUrlShape } from "./seo-social-payload.js";
+import {
+  loadSharedSeoInnerFieldUids,
+  loadSharedSeoPageUrlFields,
+  resolveSeoPageUrlShape,
+} from "./seo-social-payload.js";
 
 /** How the author image field is modeled on the content type. */
 export type AuthorImageLayout = "group" | "global" | "file";
@@ -56,7 +60,7 @@ export type BlogAuthorFieldUids = {
   metaDescription: string;
   metaImageGroup: string;
   metaImageFileField: string;
-  pageOwner: string;
+  seoPageOwner: string;
   fileRefShape: FileRefShape;
 };
 
@@ -107,11 +111,11 @@ export function loadBlogAuthorFieldUids(): BlogAuthorFieldUids {
     seoPageUrl: process.env.BLOG_AUTHOR_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadAuthorSeoPageUrlShape(),
     ...loadSharedSeoPageUrlFields(),
+    ...loadSharedSeoInnerFieldUids(),
     seoCanonical: process.env.BLOG_AUTHOR_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_AUTHOR_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_AUTHOR_FIELD_META_IMAGE ?? "meta_image",
     metaImageFileField: process.env.BLOG_AUTHOR_SEO_META_IMAGE_FILE_FIELD?.trim() || "file",
-    pageOwner: process.env.BLOG_AUTHOR_FIELD_PAGE_OWNER ?? "page_owner",
     fileRefShape: loadBlogAuthorFileRefShape(),
   };
 }

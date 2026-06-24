@@ -76,7 +76,6 @@ function setScalar(entry: Record<string, unknown>, fieldUid: string, value: unkn
 type BuildAuthorPayloadCtx = {
   term: WpStoryAuthor;
   fields: BlogAuthorFieldUids;
-  pageOwnerDefault: string;
   wp: WordPressClient;
   cs: ContentstackManagementClient;
   map: MappingStore;
@@ -141,7 +140,6 @@ async function buildBlogAuthorEntryPayload(ctx: BuildAuthorPayloadCtx): Promise<
   setScalar(entryPayload, fields.twitterLink, pickString(meta.twitter_url));
   setScalar(entryPayload, fields.linkedinLink, pickString(meta.linkedin_url));
   setScalar(entryPayload, fields.facebookLink, pickString(meta.facebook_url));
-  setScalar(entryPayload, fields.pageOwner, ctx.pageOwnerDefault);
 
   const existingSeoSocial =
     ctx.existingEntry?.[fields.seoSocialGroup] &&
@@ -277,8 +275,6 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
   const cfg = loadConfig();
   const mongoCfg = loadMongoConfig();
   const mediaSheetPath = process.env.MEDIA_SHEET_PATH ?? "wp-media-mapping.xlsx";
-  const pageOwnerDefault = process.env.BLOG_AUTHOR_PAGE_OWNER_DEFAULT?.trim() ?? "";
-
   const auth =
     cfg.wp.user && cfg.wp.applicationPassword
       ? basicAuthHeader(cfg.wp.user, cfg.wp.applicationPassword)
@@ -373,7 +369,6 @@ export async function runMigrateBlogAuthorsFromTracking(argv: string[]): Promise
       const { payload: entryPayload, slug } = await buildBlogAuthorEntryPayload({
         term,
         fields,
-        pageOwnerDefault,
         wp,
         cs,
         map,

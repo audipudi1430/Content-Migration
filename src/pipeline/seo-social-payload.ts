@@ -26,6 +26,8 @@ export type SeoSocialFieldUids = {
   seoPageUrlListItemRedirect: string;
   /** Optional; omit from payload when empty. */
   seoCanonical: string;
+  /** Inner field UID for page owner inside the seo global (e.g. `page_owner`). */
+  seoPageOwner: string;
   metaDescription: string;
   /** Group inside global holding the file reference (e.g. `meta_image`). */
   metaImageGroup: string;
@@ -52,6 +54,27 @@ export function resolveSeoPageUrlShape(typeEnv: string | undefined, fallback: Se
     parseSeoPageUrlShape(process.env.MIGRATION_SEO_PAGE_URL_SHAPE) ??
     fallback
   );
+}
+
+/** Value for `seo.page_owner` from env (`PAGE_OWNER`, `MIGRATION_PAGE_OWNER`, or legacy author default). */
+export function loadMigrationPageOwnerValue(): string {
+  return (
+    process.env.PAGE_OWNER?.trim() ||
+    process.env.page_owner?.trim() ||
+    process.env.MIGRATION_PAGE_OWNER?.trim() ||
+    process.env.BLOG_AUTHOR_PAGE_OWNER_DEFAULT?.trim() ||
+    ""
+  );
+}
+
+/** Shared inner field UIDs on the seo global (override via `MIGRATION_SEO_PAGE_OWNER_FIELD`). */
+export function loadSharedSeoInnerFieldUids(): Pick<SeoSocialFieldUids, "seoPageOwner"> {
+  return {
+    seoPageOwner:
+      process.env.MIGRATION_SEO_PAGE_OWNER_FIELD?.trim() ||
+      process.env.BLOG_FIELD_SEO_PAGE_OWNER?.trim() ||
+      "page_owner",
+  };
 }
 
 /** Shared inner field UIDs for `seo.page_url` (override via `MIGRATION_SEO_PAGE_URL_*`). */
@@ -162,6 +185,11 @@ export function setSeoSocialGroup(
 
   if (fields.seoCanonical && seo.canonicalPath) {
     group[fields.seoCanonical] = seo.canonicalPath;
+  }
+
+  const pageOwnerValue = loadMigrationPageOwnerValue();
+  if (pageOwnerValue && fields.seoPageOwner) {
+    group[fields.seoPageOwner] = pageOwnerValue;
   }
 
   if (metaImageAssetUid) {

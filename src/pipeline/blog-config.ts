@@ -10,6 +10,7 @@ import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { WpEntityKind } from "../mapping-store.js";
 import type { SeoSocialFieldUids } from "./seo-social-payload.js";
 import {
+  loadSharedSeoInnerFieldUids,
   loadSharedSeoPageUrlFields,
   resolveSeoPageUrlShape,
 } from "./seo-social-payload.js";
@@ -169,6 +170,7 @@ export function loadBlogFieldUids(): BlogFieldUids {
     seoPageUrl: process.env.BLOG_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadBlogSeoPageUrlShape(),
     ...loadSharedSeoPageUrlFields(),
+    ...loadSharedSeoInnerFieldUids(),
     seoCanonical: process.env.BLOG_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_FIELD_META_IMAGE ?? "meta_image",

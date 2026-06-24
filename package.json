@@ -17,6 +17,7 @@
     "pipeline:migrate-blog-categories": "tsx src/pipeline/cli.ts migrate-blog-categories",
     "pipeline:migrate-blog-stories": "tsx src/pipeline/cli.ts migrate-blog-stories",
     "pipeline:publish": "tsx src/pipeline/cli.ts publish",
+    "pipeline:add-to-release": "tsx src/pipeline/cli.ts add-to-release",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

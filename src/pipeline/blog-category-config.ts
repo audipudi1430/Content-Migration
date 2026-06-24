@@ -3,6 +3,7 @@ import { loadBlogAuthorFileRefShape } from "./blog-author-config.js";
 import type { MetaDescriptionSource } from "./blog-author-seo.js";
 import type { SeoSocialFieldUids } from "./seo-social-payload.js";
 import {
+  loadSharedSeoInnerFieldUids,
   loadSharedSeoPageUrlFields,
   resolveSeoPageUrlShape,
 } from "./seo-social-payload.js";
@@ -116,6 +117,7 @@ export function loadBlogCategoryFieldUids(): BlogCategoryFieldUids {
     seoPageUrl: process.env.BLOG_CATEGORY_FIELD_SEO_PAGE_URL ?? "page_url",
     seoPageUrlShape: loadSeoPageUrlShape(),
     ...loadSharedSeoPageUrlFields(),
+    ...loadSharedSeoInnerFieldUids(),
     seoCanonical: process.env.BLOG_CATEGORY_FIELD_SEO_CANONICAL?.trim() ?? "",
     metaDescription: process.env.BLOG_CATEGORY_FIELD_META_DESCRIPTION ?? "meta_description",
     metaImageGroup: process.env.BLOG_CATEGORY_FIELD_META_IMAGE ?? "meta_image",

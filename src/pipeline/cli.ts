@@ -6,6 +6,7 @@ import { runMigrateBlogStoriesFromTracking } from "./migrate-blog-stories.js";
 import { runMigrateBlogAuthorsFromTracking } from "./migrate-blog-authors.js";
 import { runMigrateBlogCategoriesFromTracking } from "./migrate-blog-categories.js";
 import { runMigrateContentFromTracking, runMigrateMediaFromTracking } from "./migrate-from-tracking.js";
+import { runAddToReleaseFromTracking } from "./add-to-release.js";
 import { runPublishFromTracking } from "./publish.js";
 
 async function main() {
@@ -25,6 +26,7 @@ async function main() {
   npm run pipeline:migrate-blog-categories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-blog-stories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
+  npm run pipeline:add-to-release -- --env=stack-a [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
 
 Env (see env/.env.migration-pipeline.example):
   MIGRATION_SOURCE_WORKBOOK, MIGRATION_TRACKING_WORKBOOK, MIGRATION_TRACKING_SHEET,
@@ -34,7 +36,7 @@ Env (see env/.env.migration-pipeline.example):
   MIGRATION_CONTENT_TYPE_UID, MONGODB_URI, MONGODB_COLLECTION, MIGRATION_RUN_ID, MIGRATION_MICROSITE,
   MIGRATION_EXTRACT_TAB, MIGRATION_EXTRACT_CONCURRENCY, MIGRATION_TRACKING_PER_TAB_SHEETS,
   MIGRATION_EXTRACT_SKIP_WP_ENRICH, MIGRATION_WP_EXTRACT_JSON_MAX_BYTES,
-  CONTENTSTACK_PUBLISH_ENVIRONMENTS, CONTENTSTACK_PUBLISH_LOCALES, CS_FEATURED_IMAGE_FIELD_UID,
+  CONTENTSTACK_PUBLISH_ENVIRONMENTS, CONTENTSTACK_PUBLISH_LOCALES, CONTENTSTACK_RELEASE_NAME, PAGE_OWNER,
   CONTENTSTACK_ENTRY_TARGET_URL_TEMPLATE, CONTENTSTACK_ASSET_TARGET_URL_TEMPLATE,
   story_author→blog_author: CS_CONTENT_TYPE_BLOG_AUTHOR, BLOG_AUTHOR_FIELD_*, BLOG_AUTHOR_UPDATE, --update
   story_category→blog_category: CS_CONTENT_TYPE_BLOG_CATEGORY, BLOG_CATEGORY_FIELD_*, BLOG_CATEGORY_URL_LANGUAGE, BLOG_CATEGORY_UPDATE, --update
@@ -52,6 +54,7 @@ Env (see env/.env.migration-pipeline.example):
   else if (cmd === "migrate-blog-categories") await runMigrateBlogCategoriesFromTracking(rest);
   else if (cmd === "migrate-blog-stories") await runMigrateBlogStoriesFromTracking(rest);
   else if (cmd === "publish") await runPublishFromTracking(rest);
+  else if (cmd === "add-to-release") await runAddToReleaseFromTracking(rest);
   else throw new Error(`Unknown pipeline command: ${cmd}`);
 }
 
