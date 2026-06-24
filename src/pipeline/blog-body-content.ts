@@ -141,12 +141,87 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
   };
 }
 
-/** One modular `text` block per WordPress paragraph/heading (no merging). */
+/** Non-mergeable rich text in a modular `text` block (lists, quotes, etc.). */
+function isNonMergeableTextHtml(text: string): boolean {
+  return /<(ul|ol|table|blockquote|figure|iframe|video|audio)\b/i.test(text);
+}
+
+/** Heading-only or paragraph-like modular `text` blocks (core/heading + core/paragraph). */
+function isHeadingOrParagraphTextBlock(
+  block: Record<string, unknown>,
+  uids: BlogBodyBlockUids
+): boolean {
+  const inner = block[uids.text.blockUid];
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) return false;
+
+  const fields = inner as Record<string, unknown>;
+  const subhead = pickString(fields[uids.text.subhead]);
+  const text = pickString(fields[uids.text.text]);
+  const groupTitle = pickString(fields[uids.text.groupTitle]);
+
+  if (groupTitle) return false;
+  if (subhead && !text) return true;
+  if (text && !isNonMergeableTextHtml(text)) return true;
+  return false;
+}
+
+function mergeHeadingParagraphTextRun(
+  run: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): Record<string, unknown> {
+  let subhead = "";
+  const textParts: string[] = [];
+
+  for (const fields of run) {
+    const sh = pickString(fields[uids.text.subhead]);
+    const tx = pickString(fields[uids.text.text]);
+
+    if (sh) {
+      if (!subhead) subhead = sh;
+      else textParts.push(`<h2>${sh}</h2>`);
+    }
+    if (tx) textParts.push(tx);
+  }
+
+  return textBlockPayload(uids, {
+    subhead: subhead || undefined,
+    text: textParts.length > 0 ? textParts.join("") : undefined,
+  });
+}
+
+/**
+ * Merge consecutive core/heading + core/paragraph modular `text` blocks into one block.
+ * Paragraphs stay separate in the `text` HTML (`<p>…</p><p>…</p>`); headings use `subhead`.
+ */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
-  _uids: BlogBodyBlockUids
+  uids: BlogBodyBlockUids
 ): Record<string, unknown>[] {
-  return blocks;
+  const result: Record<string, unknown>[] = [];
+  let i = 0;
+
+  while (i < blocks.length) {
+    if (!isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+      result.push(blocks[i]!);
+      i += 1;
+      continue;
+    }
+
+    const runStart = i;
+    const runFields: Record<string, unknown>[] = [];
+    while (i < blocks.length && isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+      runFields.push(blocks[i]![uids.text.blockUid] as Record<string, unknown>);
+      i += 1;
+    }
+
+    if (runFields.length >= 2) {
+      result.push(mergeHeadingParagraphTextRun(runFields, uids));
+    } else {
+      result.push(blocks[runStart]!);
+    }
+  }
+
+  return result;
 }
 
 /** Wrap modular blocks in the Body Content global field object for CMA. */
