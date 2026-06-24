@@ -165,33 +165,106 @@ function isHeadingOrParagraphTextBlock(
   return false;
 }
 
-function mergeHeadingParagraphTextRun(
+function isHeadingOnlyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
+  const subhead = pickString(fields[uids.text.subhead]);
+  const text = pickString(fields[uids.text.text]);
+  return Boolean(subhead && !text);
+}
+
+const PARAGRAPH_TEXT_JOIN = "\n";
+
+function mergeParagraphOnlyRun(
   run: Record<string, unknown>[],
   uids: BlogBodyBlockUids
 ): Record<string, unknown> {
-  let subhead = "";
-  const textParts: string[] = [];
+  const textParts = run
+    .map((fields) => pickString(fields[uids.text.text]))
+    .filter(Boolean);
+  return textBlockPayload(uids, {
+    text: textParts.length > 0 ? textParts.join(PARAGRAPH_TEXT_JOIN) : undefined,
+  });
+}
 
-  for (const fields of run) {
-    const sh = pickString(fields[uids.text.subhead]);
-    const tx = pickString(fields[uids.text.text]);
-
-    if (sh) {
-      if (!subhead) subhead = sh;
-      else textParts.push(`<h2>${sh}</h2>`);
-    }
-    if (tx) textParts.push(tx);
-  }
-
+function mergeHeadingWithParagraphsRun(
+  run: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): Record<string, unknown> {
+  const subhead = pickString(run[0]![uids.text.subhead]);
+  const textParts = run
+    .slice(1)
+    .map((fields) => pickString(fields[uids.text.text]))
+    .filter(Boolean);
   return textBlockPayload(uids, {
     subhead: subhead || undefined,
-    text: textParts.length > 0 ? textParts.join("") : undefined,
+    text: textParts.length > 0 ? textParts.join(PARAGRAPH_TEXT_JOIN) : undefined,
   });
 }
 
 /**
- * Merge consecutive core/heading + core/paragraph modular `text` blocks into one block.
- * Paragraphs stay separate in the `text` HTML (`<p>…</p><p>…</p>`); headings use `subhead`.
+ * Split a consecutive heading/paragraph run into merge groups:
+ * - paragraph-only runs (no heading)
+ * - one heading + its following paragraphs (until the next heading)
+ */
+function splitHeadingParagraphRuns(
+  fields: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): Record<string, unknown>[][] {
+  const groups: Record<string, unknown>[][] = [];
+  let paragraphRun: Record<string, unknown>[] = [];
+
+  const flushParagraphRun = (): void => {
+    if (paragraphRun.length > 0) {
+      groups.push(paragraphRun);
+      paragraphRun = [];
+    }
+  };
+
+  let idx = 0;
+  while (idx < fields.length) {
+    const field = fields[idx]!;
+    if (isHeadingOnlyTextFields(field, uids)) {
+      flushParagraphRun();
+      const headingGroup = [field];
+      idx += 1;
+      while (idx < fields.length && !isHeadingOnlyTextFields(fields[idx]!, uids)) {
+        headingGroup.push(fields[idx]!);
+        idx += 1;
+      }
+      groups.push(headingGroup);
+      continue;
+    }
+
+    paragraphRun.push(field);
+    idx += 1;
+  }
+
+  flushParagraphRun();
+  return groups;
+}
+
+function pushConsolidatedTextGroup(
+  target: Record<string, unknown>[],
+  group: Record<string, unknown>[],
+  uids: BlogBodyBlockUids
+): void {
+  if (group.length === 0) return;
+  if (group.length === 1) {
+    target.push(textBlockPayload(uids, {
+      subhead: pickString(group[0]![uids.text.subhead]) || undefined,
+      text: pickString(group[0]![uids.text.text]) || undefined,
+    }));
+    return;
+  }
+  if (isHeadingOnlyTextFields(group[0]!, uids)) {
+    target.push(mergeHeadingWithParagraphsRun(group, uids));
+    return;
+  }
+  target.push(mergeParagraphOnlyRun(group, uids));
+}
+
+/**
+ * Merge consecutive core/paragraph blocks, and core/heading + following paragraphs.
+ * A heading starts a new group; paragraphs before the first heading stay separate.
  */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
@@ -207,17 +280,14 @@ export function consolidateModularTextBlocks(
       continue;
     }
 
-    const runStart = i;
     const runFields: Record<string, unknown>[] = [];
     while (i < blocks.length && isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
       runFields.push(blocks[i]![uids.text.blockUid] as Record<string, unknown>);
       i += 1;
     }
 
-    if (runFields.length >= 2) {
-      result.push(mergeHeadingParagraphTextRun(runFields, uids));
-    } else {
-      result.push(blocks[runStart]!);
+    for (const group of splitHeadingParagraphRuns(runFields, uids)) {
+      pushConsolidatedTextGroup(result, group, uids);
     }
   }
 
