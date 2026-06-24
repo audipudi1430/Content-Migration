@@ -1,5 +1,6 @@
 import { initPipelineEnv } from "./args.js";
 import { runExtractContentImages } from "./extract-content-images.js";
+import { runExtractContentVideos } from "./extract-content-videos.js";
 import { runExtractUrls } from "./extract-urls.js";
 import { runMigrateBlogStoriesFromTracking } from "./migrate-blog-stories.js";
 import { runMigrateBlogAuthorsFromTracking } from "./migrate-blog-authors.js";
@@ -17,6 +18,7 @@ async function main() {
     console.error(`Usage (always pass --env=... or --env-file=...):
   npm run pipeline:extract -- --env=stack-a [--tab=blog_author] [--concurrency=8] [--per-tab-tracking=1]
   npm run pipeline:extract-content-images -- --env=stack-a --tab=stories [--concurrency=8] [--output-workbook=content-images-stories.xlsx]
+  npm run pipeline:extract-content-videos -- --env=stack-a --tab=stories [--concurrency=8] [--output-workbook=content-videos-stories.xlsx]
   npm run pipeline:migrate-media -- --env=stack-a [--mode=all|single|ids|failed] [--limit=25] [--offset=0] [--ids=1,2]
   npm run pipeline:migrate-content -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2]
   npm run pipeline:migrate-blog-authors -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=365] [--update]
@@ -43,6 +45,7 @@ Env (see env/.env.migration-pipeline.example):
 
   if (cmd === "extract") await runExtractUrls(rest);
   else if (cmd === "extract-content-images") await runExtractContentImages(rest);
+  else if (cmd === "extract-content-videos") await runExtractContentVideos(rest);
   else if (cmd === "migrate-media") await runMigrateMediaFromTracking(rest);
   else if (cmd === "migrate-content") await runMigrateContentFromTracking(rest);
   else if (cmd === "migrate-blog-authors") await runMigrateBlogAuthorsFromTracking(rest);
