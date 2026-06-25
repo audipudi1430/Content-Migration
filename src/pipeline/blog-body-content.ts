@@ -171,17 +171,27 @@ function isHeadingOnlyTextFields(fields: Record<string, unknown>, uids: BlogBody
   return Boolean(subhead && !text);
 }
 
-const PARAGRAPH_TEXT_JOIN = "\n";
+/** Ensure Gutenberg paragraph content is a single `<p>…</p>` for Contentstack RTE. */
+function wrapParagraphHtml(html: string): string {
+  const trimmed = stripUnsafeHtml(html).trim();
+  if (!trimmed) return "";
+  if (/^<p[\s>]/i.test(trimmed)) return trimmed;
+  return `<p>${trimmed}</p>`;
+}
+
+const PARAGRAPH_TEXT_JOIN = "&nbsp;";
+
+function joinParagraphHtml(parts: string[]): string {
+  return parts.map((part) => wrapParagraphHtml(part)).filter(Boolean).join(PARAGRAPH_TEXT_JOIN);
+}
 
 function mergeParagraphOnlyRun(
   run: Record<string, unknown>[],
   uids: BlogBodyBlockUids
 ): Record<string, unknown> {
-  const textParts = run
-    .map((fields) => pickString(fields[uids.text.text]))
-    .filter(Boolean);
+  const textParts = run.map((fields) => pickString(fields[uids.text.text])).filter(Boolean);
   return textBlockPayload(uids, {
-    text: textParts.length > 0 ? textParts.join(PARAGRAPH_TEXT_JOIN) : undefined,
+    text: textParts.length > 0 ? joinParagraphHtml(textParts) : undefined,
   });
 }
 
@@ -190,13 +200,10 @@ function mergeHeadingWithParagraphsRun(
   uids: BlogBodyBlockUids
 ): Record<string, unknown> {
   const subhead = pickString(run[0]![uids.text.subhead]);
-  const textParts = run
-    .slice(1)
-    .map((fields) => pickString(fields[uids.text.text]))
-    .filter(Boolean);
+  const textParts = run.slice(1).map((fields) => pickString(fields[uids.text.text])).filter(Boolean);
   return textBlockPayload(uids, {
     subhead: subhead || undefined,
-    text: textParts.length > 0 ? textParts.join(PARAGRAPH_TEXT_JOIN) : undefined,
+    text: textParts.length > 0 ? joinParagraphHtml(textParts) : undefined,
   });
 }
 
@@ -249,9 +256,10 @@ function pushConsolidatedTextGroup(
 ): void {
   if (group.length === 0) return;
   if (group.length === 1) {
+    const text = pickString(group[0]![uids.text.text]);
     target.push(textBlockPayload(uids, {
       subhead: pickString(group[0]![uids.text.subhead]) || undefined,
-      text: pickString(group[0]![uids.text.text]) || undefined,
+      text: text ? wrapParagraphHtml(text) : undefined,
     }));
     return;
   }
@@ -368,7 +376,7 @@ export function normalizeWpBlock(raw: WpContentBlock): WpContentBlock {
   const attrContent = pickString(attrs.content);
   if (!innerHTML && attrContent) {
     if (blockName === "core/paragraph") {
-      innerHTML = /<[a-z][\s\S]*>/i.test(attrContent) ? attrContent : `<p>${attrContent}</p>`;
+      innerHTML = wrapParagraphHtml(attrContent);
     } else if (blockName === "core/heading") {
       const level = pickPositiveInt(attrs.level) ?? 2;
       innerHTML = `<h${level}>${attrContent}</h${level}>`;
@@ -729,7 +737,7 @@ export async function buildBodyContentFromWpStory(
     }
 
     if (seg.kind === "paragraph") {
-      const text = stripUnsafeHtml(seg.html);
+      const text = wrapParagraphHtml(seg.html);
       if (!text) continue;
       blocks.push(textBlockPayload(uids, { text }));
       stats.text += 1;
@@ -811,14 +819,14 @@ function paragraphHtmlFromBlock(
   if (!html) {
     const content = pickString(block.attrs?.content);
     if (content) {
-      html = /<[a-z][\s\S]*>/i.test(content) ? stripUnsafeHtml(content) : `<p>${content}</p>`;
+      html = stripUnsafeHtml(content);
     }
   }
   if (!html && segmentCursor) {
     const seg = segmentCursor.take("paragraph");
     if (seg?.kind === "paragraph") html = stripUnsafeHtml(seg.html);
   }
-  return html;
+  return html ? wrapParagraphHtml(html) : "";
 }
 
 function isOrderedList(attrs: Record<string, unknown> | undefined): boolean {
@@ -1066,7 +1074,7 @@ async function convertOneWpBlock(
   const unknownText =
     pickString(normalized.attrs?.content) || stripUnsafeHtml(normalized.innerHTML ?? "");
   if (unknownText) {
-    const html = /<[a-z][\s\S]*>/i.test(unknownText) ? stripUnsafeHtml(unknownText) : `<p>${unknownText}</p>`;
+    const html = wrapParagraphHtml(unknownText);
     outPushText(uids, { text: html }, stats, result);
     log?.(`mapped unknown block ${name} as text`);
     return result;
