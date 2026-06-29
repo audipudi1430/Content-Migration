@@ -7,6 +7,7 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
 import { normalizeWpText } from "./contentstack-rte.js";
+import { pickWpStoryDateline } from "./wp-dateline.js";
 
 export { pickRenderedTitle };
 
@@ -99,12 +100,6 @@ export function pickMetaString(meta: Record<string, unknown> | undefined, key: s
   if (typeof v === "string") return normalizeWpText(v);
   if (typeof v === "number" || typeof v === "boolean") return normalizeWpText(String(v));
   return "";
-}
-
-function pickWpStoryDateline(story: Record<string, unknown>): string | undefined {
-  const date = story.date;
-  if (typeof date === "string" && date.trim()) return date.trim();
-  return undefined;
 }
 
 export type BuildBlogPayloadInput = {
