@@ -112,6 +112,15 @@ function plainLabelText(html: string): string {
   return stripTags(decodeHtmlEntities(html)).replace(/\s+/g, " ").trim();
 }
 
+/** First N words of the article headline — contributor label on text modular blocks. */
+export function groupTitleFromHeadline(headline: string, wordCount?: number): string {
+  const raw = process.env.BLOG_BODY_GROUP_TITLE_WORD_COUNT ?? "3";
+  const parsed = wordCount ?? Number(raw);
+  const count = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 3;
+  const words = plainLabelText(headline).split(/\s+/).filter(Boolean);
+  return words.slice(0, count).join(" ");
+}
+
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fields)) {
@@ -171,6 +180,13 @@ function isHeadingOnlyTextFields(fields: Record<string, unknown>, uids: BlogBody
   return Boolean(subhead && !text);
 }
 
+function isParagraphOnlyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
+  const subhead = pickString(fields[uids.text.subhead]);
+  const text = pickString(fields[uids.text.text]);
+  if (subhead || !text) return false;
+  return !isNonMergeableTextHtml(text);
+}
+
 /** Ensure Gutenberg paragraph content is a single `<p>…</p>` for Contentstack RTE. */
 function wrapParagraphHtml(html: string): string {
   const trimmed = stripUnsafeHtml(html).trim();
@@ -182,7 +198,15 @@ function wrapParagraphHtml(html: string): string {
 const PARAGRAPH_TEXT_JOIN = "&nbsp;";
 
 function joinParagraphHtml(parts: string[]): string {
-  return parts.map((part) => wrapParagraphHtml(part)).filter(Boolean).join(PARAGRAPH_TEXT_JOIN);
+  return parts
+    .map((part) => {
+      const trimmed = stripUnsafeHtml(part).trim();
+      if (!trimmed) return "";
+      if (/^<(p|h[1-6]|ul|ol|table|blockquote)[\s>]/i.test(trimmed)) return trimmed;
+      return wrapParagraphHtml(trimmed);
+    })
+    .filter(Boolean)
+    .join(PARAGRAPH_TEXT_JOIN);
 }
 
 function mergeParagraphOnlyRun(
@@ -199,8 +223,22 @@ function mergeHeadingWithParagraphsRun(
   run: Record<string, unknown>[],
   uids: BlogBodyBlockUids
 ): Record<string, unknown> {
-  const subhead = pickString(run[0]![uids.text.subhead]);
-  const textParts = run.slice(1).map((fields) => pickString(fields[uids.text.text])).filter(Boolean);
+  let subhead = "";
+  const textParts: string[] = [];
+  let idx = 0;
+
+  while (idx < run.length && isHeadingOnlyTextFields(run[idx]!, uids)) {
+    const sh = pickString(run[idx]![uids.text.subhead]);
+    if (!subhead && sh) subhead = sh;
+    else if (sh) textParts.push(`<h2>${plainLabelText(sh)}</h2>`);
+    idx += 1;
+  }
+
+  for (; idx < run.length; idx++) {
+    const tx = pickString(run[idx]![uids.text.text]);
+    if (tx) textParts.push(tx);
+  }
+
   return textBlockPayload(uids, {
     subhead: subhead || undefined,
     text: textParts.length > 0 ? joinParagraphHtml(textParts) : undefined,
@@ -209,8 +247,9 @@ function mergeHeadingWithParagraphsRun(
 
 /**
  * Split a consecutive heading/paragraph run into merge groups:
- * - paragraph-only runs (no heading)
- * - one heading + its following paragraphs (until the next heading)
+ * - paragraph-only runs merge into one text block
+ * - heading(s) + following paragraphs merge into one text block (heading → subhead)
+ * Lists, images, quotes, and videos break runs before consolidation.
  */
 function splitHeadingParagraphRuns(
   fields: Record<string, unknown>[],
@@ -233,7 +272,11 @@ function splitHeadingParagraphRuns(
       flushParagraphRun();
       const headingGroup = [field];
       idx += 1;
-      while (idx < fields.length && !isHeadingOnlyTextFields(fields[idx]!, uids)) {
+      while (idx < fields.length && isHeadingOnlyTextFields(fields[idx]!, uids)) {
+        headingGroup.push(fields[idx]!);
+        idx += 1;
+      }
+      while (idx < fields.length && isParagraphOnlyTextFields(fields[idx]!, uids)) {
         headingGroup.push(fields[idx]!);
         idx += 1;
       }
@@ -241,12 +284,40 @@ function splitHeadingParagraphRuns(
       continue;
     }
 
-    paragraphRun.push(field);
+    if (isParagraphOnlyTextFields(field, uids)) {
+      paragraphRun.push(field);
+      idx += 1;
+      continue;
+    }
+
+    flushParagraphRun();
+    groups.push([field]);
     idx += 1;
   }
 
   flushParagraphRun();
   return groups;
+}
+
+function applyContributorGroupTitle(
+  blocks: Record<string, unknown>[],
+  uids: BlogBodyBlockUids,
+  articleHeadline: string
+): Record<string, unknown>[] {
+  const prefix = groupTitleFromHeadline(articleHeadline);
+  if (!prefix) return blocks;
+
+  const textUid = uids.text.blockUid;
+  return blocks.map((block) => {
+    const inner = block[textUid];
+    if (!inner || typeof inner !== "object" || Array.isArray(inner)) return block;
+    return {
+      [textUid]: {
+        ...(inner as Record<string, unknown>),
+        [uids.text.groupTitle]: prefix,
+      },
+    };
+  });
 }
 
 function pushConsolidatedTextGroup(
@@ -271,12 +342,15 @@ function pushConsolidatedTextGroup(
 }
 
 /**
- * Merge consecutive core/paragraph blocks, and core/heading + following paragraphs.
- * A heading starts a new group; paragraphs before the first heading stay separate.
+ * Merge body text into modular blocks:
+ * - consecutive paragraphs → one text block
+ * - heading + following paragraphs → one text block (new block per section)
+ * - images, testimonials, videos, and lists stay separate blocks
  */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids
+  uids: BlogBodyBlockUids,
+  options?: { articleHeadline?: string }
 ): Record<string, unknown>[] {
   const result: Record<string, unknown>[] = [];
   let i = 0;
@@ -299,7 +373,7 @@ export function consolidateModularTextBlocks(
     }
   }
 
-  return result;
+  return applyContributorGroupTitle(result, uids, options?.articleHeadline ?? "");
 }
 
 /** Wrap modular blocks in the Body Content global field object for CMA. */
@@ -677,13 +751,19 @@ class RenderedSegmentCursor {
   }
 }
 
+export type BodyContentBuildOptions = {
+  /** Article headline — first few words copied to each text block `group_title`. */
+  articleHeadline?: string;
+};
+
 export async function buildBodyContentFromWpStory(
   story: Record<string, unknown>,
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
   sourceMode: BlogBodySource = "blocks_then_rendered",
   log?: (msg: string) => void,
-  resolveVideo?: BodyVideoResolver
+  resolveVideo?: BodyVideoResolver,
+  options?: BodyContentBuildOptions
 ): Promise<BodyContentBuildResult> {
   const stats = {
     text: 0,
@@ -714,7 +794,7 @@ export async function buildBodyContentFromWpStory(
       log,
       segmentCursor
     );
-    const blocks = consolidateModularTextBlocks(rawBlocks, uids);
+    const blocks = consolidateModularTextBlocks(rawBlocks, uids, options);
     return { blocks, stats };
   }
 
@@ -780,7 +860,7 @@ export async function buildBodyContentFromWpStory(
     }
   }
 
-  const consolidated = consolidateModularTextBlocks(blocks, uids);
+  const consolidated = consolidateModularTextBlocks(blocks, uids, options);
   return { blocks: consolidated, stats };
 }
 
