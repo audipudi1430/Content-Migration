@@ -101,6 +101,12 @@ export function pickMetaString(meta: Record<string, unknown> | undefined, key: s
   return "";
 }
 
+function pickWpStoryDateline(story: Record<string, unknown>): string | undefined {
+  const date = story.date;
+  if (typeof date === "string" && date.trim()) return date.trim();
+  return undefined;
+}
+
 export type BuildBlogPayloadInput = {
   story: Record<string, unknown>;
   fields: BlogFieldUids;
@@ -162,7 +168,7 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   setScalar(entry, fields.headline, headlineOverride?.trim() || entryTitle);
   setScalar(entry, fields.subHeader, pickMetaString(meta, metaKeys.subHeader));
   setScalar(entry, fields.shortLinkText, entryTitle);
-  setScalar(entry, fields.dateline, new Date().toISOString());
+  setScalar(entry, fields.dateline, pickWpStoryDateline(story) ?? new Date().toISOString());
   setScalar(entry, fields.byline, bylineOverride?.trim() || pickMetaString(meta, metaKeys.byline));
 
   if (blogTopics && blogTopics.length > 0) {
