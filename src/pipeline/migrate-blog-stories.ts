@@ -261,8 +261,17 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         `Story ${story.id ?? tRow.wp_id}`;
       const cmsTitle = wpTitle;
       const headlineFromSheet = sheetCols.headline.trim() || undefined;
+      const articleHeadline = headlineFromSheet || cmsTitle;
       if (headlineFromSheet) {
         console.error(`[blog] wp_id=${tRow.wp_id} headline from sheet="${headlineFromSheet}"`);
+      }
+
+      const bylineOverride =
+        sheetCols.namedAuthorColumnPresent && !isSheetNoneValue(sheetCols.namedAuthor)
+          ? sheetCols.namedAuthor
+          : undefined;
+      if (bylineOverride) {
+        console.error(`[blog] wp_id=${tRow.wp_id} byline="${bylineOverride}" (sheet Named Author)`);
       }
 
       const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
@@ -375,6 +384,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         pageUrl,
         cmsTitle,
         headlineOverride: headlineFromSheet,
+        bylineOverride,
         categoryRefUids,
         categoryRefContentTypeUid,
         authorRefUids,
@@ -535,7 +545,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             console.error(`[blog] wp_id=${tRow.wp_id} body video FAIL: ${msg.slice(0, 200)}`);
             return undefined;
           }
-        }
+        },
+        { articleHeadline }
       );
 
       if (bodyResult.blocks.length > 0) {

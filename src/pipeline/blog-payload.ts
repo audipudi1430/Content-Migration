@@ -7,6 +7,7 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
 import { normalizeWpText } from "./contentstack-rte.js";
+import { pickWpStoryDateline } from "./wp-dateline.js";
 
 export { pickRenderedTitle };
 
@@ -108,6 +109,8 @@ export type BuildBlogPayloadInput = {
   cmsTitle: string;
   /** When set, maps only to the `headline` field (from Excel Headline column). */
   headlineOverride?: string;
+  /** When set (e.g. sheet Named Author), maps to `byline`. */
+  bylineOverride?: string;
   categoryRefUids?: string[];
   categoryRefContentTypeUid: string;
   authorRefUids?: string[];
@@ -132,6 +135,7 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
     pageUrl,
     cmsTitle,
     headlineOverride,
+    bylineOverride,
     categoryRefUids,
     categoryRefContentTypeUid,
     authorRefUids,
@@ -159,8 +163,8 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
   setScalar(entry, fields.headline, headlineOverride?.trim() || entryTitle);
   setScalar(entry, fields.subHeader, pickMetaString(meta, metaKeys.subHeader));
   setScalar(entry, fields.shortLinkText, entryTitle);
-  setScalar(entry, fields.dateline, new Date().toISOString());
-  setScalar(entry, fields.byline, pickMetaString(meta, metaKeys.byline));
+  setScalar(entry, fields.dateline, pickWpStoryDateline(story) ?? new Date().toISOString());
+  setScalar(entry, fields.byline, bylineOverride?.trim() || pickMetaString(meta, metaKeys.byline));
 
   if (blogTopics && blogTopics.length > 0) {
     entry[fields.blogTopics] = blogTopics;
