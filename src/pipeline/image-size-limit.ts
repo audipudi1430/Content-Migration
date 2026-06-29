@@ -2,14 +2,14 @@ import type { ContentstackManagementClient } from "../contentstack/client.js";
 import { fetchWpMediaItem } from "../media/migrate-media-core.js";
 import type { WordPressClient } from "../wordpress/client.js";
 
-/** Default 0.3 MiB (314572 bytes). Override with `MIGRATION_IMAGE_MAX_BYTES`. */
+/** Default 307 KB. Override with `MIGRATION_IMAGE_MAX_BYTES`. */
 export function loadMigrationImageMaxBytes(): number {
   const raw =
     process.env.MIGRATION_IMAGE_MAX_BYTES?.trim() ||
     process.env.BLOG_FILE_FIELD_MAX_BYTES?.trim() ||
-    String(Math.floor(0.3 * 1024 * 1024));
+    String(307 * 1024);
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : Math.floor(0.3 * 1024 * 1024);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 307 * 1024;
 }
 
 export function formatFileSizeBytes(bytes: number): string {
