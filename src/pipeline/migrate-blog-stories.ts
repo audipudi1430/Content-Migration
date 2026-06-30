@@ -596,7 +596,10 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             `[blog] wp_id=${tRow.wp_id} WARNING: seo.meta_image omitted (image size limit)`
           );
         } else {
-          throw new Error(`seo.meta_image: og_image not resolved (${ogImageUrl})`);
+          warnings.add(`seo.meta_image: og_image not resolved (${ogImageUrl})`);
+          console.error(
+            `[blog] wp_id=${tRow.wp_id} WARNING: seo.meta_image omitted (og_image not resolved)`
+          );
         }
       }
 
