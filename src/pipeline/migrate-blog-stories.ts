@@ -261,7 +261,6 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         `Story ${story.id ?? tRow.wp_id}`;
       const cmsTitle = wpTitle;
       const headlineFromSheet = sheetCols.headline.trim() || undefined;
-      const articleHeadline = headlineFromSheet || cmsTitle;
       if (headlineFromSheet) {
         console.error(`[blog] wp_id=${tRow.wp_id} headline from sheet="${headlineFromSheet}"`);
       }
@@ -545,8 +544,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             console.error(`[blog] wp_id=${tRow.wp_id} body video FAIL: ${msg.slice(0, 200)}`);
             return undefined;
           }
-        },
-        { articleHeadline }
+        }
       );
 
       if (bodyResult.blocks.length > 0) {

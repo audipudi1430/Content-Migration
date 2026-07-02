@@ -112,13 +112,16 @@ function plainLabelText(html: string): string {
   return stripTags(decodeHtmlEntities(html)).replace(/\s+/g, " ").trim();
 }
 
-/** First N words of the article headline — contributor label on text modular blocks. */
-export function groupTitleFromHeadline(headline: string, wordCount?: number): string {
+function loadGroupTitleWordCount(): number {
   const raw = process.env.BLOG_BODY_GROUP_TITLE_WORD_COUNT ?? "3";
-  const parsed = wordCount ?? Number(raw);
-  const count = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 3;
-  const words = plainLabelText(headline).split(/\s+/).filter(Boolean);
-  return words.slice(0, count).join(" ");
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 3;
+}
+
+/** Contributor label: first N words from plain text (used when subhead is empty). */
+function excerptWordsFromText(html: string): string {
+  const words = plainLabelText(html).split(/\s+/).filter(Boolean);
+  return words.slice(0, loadGroupTitleWordCount()).join(" ");
 }
 
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
@@ -150,13 +153,13 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
   };
 }
 
-/** Non-mergeable rich text in a modular `text` block (lists, quotes, etc.). */
+/** Rich text that must stay in its own modular block (not merged with paragraphs/lists). */
 function isNonMergeableTextHtml(text: string): boolean {
-  return /<(ul|ol|table|blockquote|figure|iframe|video|audio)\b/i.test(text);
+  return /<(table|blockquote|figure|iframe|video|audio)\b/i.test(text);
 }
 
-/** Heading-only or paragraph-like modular `text` blocks (core/heading + core/paragraph). */
-function isHeadingOrParagraphTextBlock(
+/** Paragraph, list, or heading-only modular `text` blocks eligible for consolidation. */
+function isConsolidatableTextBlock(
   block: Record<string, unknown>,
   uids: BlogBodyBlockUids
 ): boolean {
@@ -166,9 +169,7 @@ function isHeadingOrParagraphTextBlock(
   const fields = inner as Record<string, unknown>;
   const subhead = pickString(fields[uids.text.subhead]);
   const text = pickString(fields[uids.text.text]);
-  const groupTitle = pickString(fields[uids.text.groupTitle]);
 
-  if (groupTitle) return false;
   if (subhead && !text) return true;
   if (text && !isNonMergeableTextHtml(text)) return true;
   return false;
@@ -180,7 +181,7 @@ function isHeadingOnlyTextFields(fields: Record<string, unknown>, uids: BlogBody
   return Boolean(subhead && !text);
 }
 
-function isParagraphOnlyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
+function isMergeableBodyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
   const subhead = pickString(fields[uids.text.subhead]);
   const text = pickString(fields[uids.text.text]);
   if (subhead || !text) return false;
@@ -195,8 +196,6 @@ function wrapParagraphHtml(html: string): string {
   return `<p>${trimmed}</p>`;
 }
 
-const PARAGRAPH_TEXT_JOIN = "&nbsp;";
-
 function joinParagraphHtml(parts: string[]): string {
   return parts
     .map((part) => {
@@ -206,7 +205,7 @@ function joinParagraphHtml(parts: string[]): string {
       return wrapParagraphHtml(trimmed);
     })
     .filter(Boolean)
-    .join(PARAGRAPH_TEXT_JOIN);
+    .join("");
 }
 
 function mergeParagraphOnlyRun(
@@ -256,12 +255,12 @@ function splitHeadingParagraphRuns(
   uids: BlogBodyBlockUids
 ): Record<string, unknown>[][] {
   const groups: Record<string, unknown>[][] = [];
-  let paragraphRun: Record<string, unknown>[] = [];
+  let bodyTextRun: Record<string, unknown>[] = [];
 
-  const flushParagraphRun = (): void => {
-    if (paragraphRun.length > 0) {
-      groups.push(paragraphRun);
-      paragraphRun = [];
+  const flushBodyTextRun = (): void => {
+    if (bodyTextRun.length > 0) {
+      groups.push(bodyTextRun);
+      bodyTextRun = [];
     }
   };
 
@@ -269,14 +268,14 @@ function splitHeadingParagraphRuns(
   while (idx < fields.length) {
     const field = fields[idx]!;
     if (isHeadingOnlyTextFields(field, uids)) {
-      flushParagraphRun();
+      flushBodyTextRun();
       const headingGroup = [field];
       idx += 1;
       while (idx < fields.length && isHeadingOnlyTextFields(fields[idx]!, uids)) {
         headingGroup.push(fields[idx]!);
         idx += 1;
       }
-      while (idx < fields.length && isParagraphOnlyTextFields(fields[idx]!, uids)) {
+      while (idx < fields.length && isMergeableBodyTextFields(fields[idx]!, uids)) {
         headingGroup.push(fields[idx]!);
         idx += 1;
       }
@@ -284,37 +283,47 @@ function splitHeadingParagraphRuns(
       continue;
     }
 
-    if (isParagraphOnlyTextFields(field, uids)) {
-      paragraphRun.push(field);
+    if (isMergeableBodyTextFields(field, uids)) {
+      bodyTextRun.push(field);
       idx += 1;
       continue;
     }
 
-    flushParagraphRun();
+    flushBodyTextRun();
     groups.push([field]);
     idx += 1;
   }
 
-  flushParagraphRun();
+  flushBodyTextRun();
   return groups;
+}
+
+function resolveContributorGroupTitle(
+  fields: Record<string, unknown>,
+  uids: BlogBodyBlockUids
+): string {
+  const subhead = pickString(fields[uids.text.subhead]);
+  if (subhead) return subhead;
+  const text = pickString(fields[uids.text.text]);
+  if (text) return excerptWordsFromText(text);
+  return "";
 }
 
 function applyContributorGroupTitle(
   blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids,
-  articleHeadline: string
+  uids: BlogBodyBlockUids
 ): Record<string, unknown>[] {
-  const prefix = groupTitleFromHeadline(articleHeadline);
-  if (!prefix) return blocks;
-
   const textUid = uids.text.blockUid;
   return blocks.map((block) => {
     const inner = block[textUid];
     if (!inner || typeof inner !== "object" || Array.isArray(inner)) return block;
+    const fields = inner as Record<string, unknown>;
+    const groupTitle = resolveContributorGroupTitle(fields, uids);
+    if (!groupTitle) return block;
     return {
       [textUid]: {
-        ...(inner as Record<string, unknown>),
-        [uids.text.groupTitle]: prefix,
+        ...fields,
+        [uids.text.groupTitle]: groupTitle,
       },
     };
   });
@@ -330,7 +339,7 @@ function pushConsolidatedTextGroup(
     const text = pickString(group[0]![uids.text.text]);
     target.push(textBlockPayload(uids, {
       subhead: pickString(group[0]![uids.text.subhead]) || undefined,
-      text: text ? wrapParagraphHtml(text) : undefined,
+      text: text ? joinParagraphHtml([text]) : undefined,
     }));
     return;
   }
@@ -343,27 +352,26 @@ function pushConsolidatedTextGroup(
 
 /**
  * Merge body text into modular blocks:
- * - consecutive paragraphs → one text block
- * - heading + following paragraphs → one text block (new block per section)
- * - images, testimonials, videos, and lists stay separate blocks
+ * - consecutive paragraphs and lists → one text block
+ * - heading + following paragraphs/lists → one text block (new block per section)
+ * - images, testimonials, and videos stay separate blocks
  */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids,
-  options?: { articleHeadline?: string }
+  uids: BlogBodyBlockUids
 ): Record<string, unknown>[] {
   const result: Record<string, unknown>[] = [];
   let i = 0;
 
   while (i < blocks.length) {
-    if (!isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+    if (!isConsolidatableTextBlock(blocks[i]!, uids)) {
       result.push(blocks[i]!);
       i += 1;
       continue;
     }
 
     const runFields: Record<string, unknown>[] = [];
-    while (i < blocks.length && isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+    while (i < blocks.length && isConsolidatableTextBlock(blocks[i]!, uids)) {
       runFields.push(blocks[i]![uids.text.blockUid] as Record<string, unknown>);
       i += 1;
     }
@@ -373,7 +381,7 @@ export function consolidateModularTextBlocks(
     }
   }
 
-  return applyContributorGroupTitle(result, uids, options?.articleHeadline ?? "");
+  return applyContributorGroupTitle(result, uids);
 }
 
 /** Wrap modular blocks in the Body Content global field object for CMA. */
@@ -751,19 +759,13 @@ class RenderedSegmentCursor {
   }
 }
 
-export type BodyContentBuildOptions = {
-  /** Article headline — first few words copied to each text block `group_title`. */
-  articleHeadline?: string;
-};
-
 export async function buildBodyContentFromWpStory(
   story: Record<string, unknown>,
   uids: BlogBodyBlockUids,
   resolveImage: BodyImageResolver,
   sourceMode: BlogBodySource = "blocks_then_rendered",
   log?: (msg: string) => void,
-  resolveVideo?: BodyVideoResolver,
-  options?: BodyContentBuildOptions
+  resolveVideo?: BodyVideoResolver
 ): Promise<BodyContentBuildResult> {
   const stats = {
     text: 0,
@@ -794,7 +796,7 @@ export async function buildBodyContentFromWpStory(
       log,
       segmentCursor
     );
-    const blocks = consolidateModularTextBlocks(rawBlocks, uids, options);
+    const blocks = consolidateModularTextBlocks(rawBlocks, uids);
     return { blocks, stats };
   }
 
@@ -860,7 +862,7 @@ export async function buildBodyContentFromWpStory(
     }
   }
 
-  const consolidated = consolidateModularTextBlocks(blocks, uids, options);
+  const consolidated = consolidateModularTextBlocks(blocks, uids);
   return { blocks: consolidated, stats };
 }
 
