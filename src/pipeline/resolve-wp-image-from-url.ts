@@ -198,14 +198,24 @@ export async function tryResolveWpImageAssetFromUrl(
       allTracking: opts.allTracking,
       warnings: opts.warnings,
     };
-    return tryResolveWpImageAssetUid(base);
+    const resolved = await tryResolveWpImageAssetUid(base);
+    if (resolved) return resolved;
+    console.error(
+      `[asset] WP media id=${found.media.id} from URL lookup failed; uploading from URL (${opts.purpose}): ${url.slice(0, 120)}`
+    );
+  } else {
+    console.error(
+      `[asset] no WP media attachment for URL; uploading from URL (${opts.purpose}): ${url.slice(0, 120)}`
+    );
   }
 
-  console.error(
-    `[asset] no WP media attachment for URL; uploading from URL (${opts.purpose}): ${url.slice(0, 120)}`
-  );
   const uploaded = await uploadImageAssetFromUrl(opts);
-  if (!uploaded) return undefined;
+  if (!uploaded) {
+    const warning = `${opts.purpose}: image URL could not be fetched or uploaded (${url.slice(0, 120)})`;
+    opts.warnings?.add(warning);
+    console.error(`[asset] WARNING: ${warning}`);
+    return undefined;
+  }
 
   const ok = await assetUidWithinSizeLimit(
     opts.cs,
@@ -215,4 +225,50 @@ export async function tryResolveWpImageAssetFromUrl(
     opts.warnings
   );
   return ok ? uploaded : undefined;
+}
+
+export type TryResolveWpImageWithFallbackOpts = Omit<ResolveWpImageAssetOpts, "attachmentId"> & {
+  attachmentId?: number;
+  imageUrl?: string;
+};
+
+/**
+ * Resolve by WP attachment id, then fall back to fetching `imageUrl` (compress + upload).
+ * Never throws — warnings are recorded when both paths fail.
+ */
+export async function tryResolveWpImageWithFallback(
+  opts: TryResolveWpImageWithFallbackOpts
+): Promise<ResolvedWpImageAsset | undefined> {
+  const { attachmentId, imageUrl } = opts;
+  const url = imageUrl?.trim();
+
+  if (attachmentId && attachmentId > 0) {
+    const resolved = await tryResolveWpImageAssetUid({ ...opts, attachmentId });
+    if (resolved) return resolved;
+
+    if (url) {
+      console.error(
+        `[asset] wp_id=${attachmentId} not resolved; trying image URL (${opts.purpose}): ${url.slice(0, 120)}`
+      );
+      const fromUrl = await tryResolveWpImageAssetFromUrl({
+        ...opts,
+        imageUrl: url,
+        purpose: `${opts.purpose} (URL fallback after wp_id=${attachmentId})`,
+      });
+      if (fromUrl) return fromUrl;
+    }
+
+    const warning = url
+      ? `${opts.purpose}: wp_id=${attachmentId} and image URL could not be resolved`
+      : `${opts.purpose}: wp_id=${attachmentId} could not be resolved`;
+    opts.warnings?.add(warning);
+    console.error(`[asset] WARNING: ${warning}`);
+    return undefined;
+  }
+
+  if (url) {
+    return tryResolveWpImageAssetFromUrl({ ...opts, imageUrl: url });
+  }
+
+  return undefined;
 }

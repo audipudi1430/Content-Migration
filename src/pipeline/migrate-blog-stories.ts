@@ -53,8 +53,10 @@ import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration
 import { normalizeWpText } from "./contentstack-rte.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
-import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
-import { tryResolveWpImageAssetUid } from "./resolve-wp-image-asset.js";
+import {
+  tryResolveWpImageAssetFromUrl,
+  tryResolveWpImageWithFallback,
+} from "./resolve-wp-image-from-url.js";
 import { tryResolveVideoEntryForBody } from "./ensure-video-entry.js";
 import {
   isSheetNoneValue,
@@ -398,8 +400,9 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       const thumbSource = pickStoryThumbnailSource(story);
       const thumbnailMediaId = thumbSource?.attachmentId ?? pickFeaturedMediaId(story);
       if (thumbnailMediaId) {
-        const resolved = await tryResolveWpImageAssetUid({
+        const resolved = await tryResolveWpImageWithFallback({
           attachmentId: thumbnailMediaId,
+          imageUrl: thumbSource?.imageUrl,
           wp,
           cs,
           map,
@@ -467,15 +470,11 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           }
           trackRef.featured_media_wp_id = String(thumbnailMediaId);
           trackRef.contentstack_asset_uid = assetUid;
-        } else if (warnings.hasSizeSkipFor(thumbnailMediaId)) {
+        } else {
           trackRef.featured_media_wp_id = String(thumbnailMediaId);
           console.error(
-            `[blog] wp_id=${tRow.wp_id} WARNING: ${featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail} omitted (image size limit)`
-          );
-        } else {
-          throw new Error(
-            `${featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail} ` +
-              `could not resolve WordPress media ${thumbnailMediaId} (from ${thumbSource?.source ?? "featured_media"})`
+            `[blog] wp_id=${tRow.wp_id} WARNING: ${featuredImageTarget === "banner_image" ? fields.bannerImage : fields.thumbnail} omitted ` +
+              `(wp_media=${thumbnailMediaId}${thumbSource?.imageUrl ? `, url=${thumbSource.imageUrl.slice(0, 80)}` : ""})`
           );
         }
       } else {
@@ -488,39 +487,21 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         story,
         bodyUids,
         async ({ attachmentId, imageUrl, purpose }) => {
-          if (attachmentId) {
-            const resolved = await tryResolveWpImageAssetUid({
-              attachmentId,
-              wp,
-              cs,
-              map,
-              mediaSheetPath,
-              folderUid,
-              locale,
-              purpose: `Story ${tRow.wp_id} ${purpose}`,
-              paths,
-              allTracking,
-              warnings,
-            });
-            return resolved?.assetUid;
-          }
-          if (imageUrl) {
-            const resolved = await tryResolveWpImageAssetFromUrl({
-              imageUrl,
-              wp,
-              cs,
-              map,
-              mediaSheetPath,
-              folderUid,
-              locale,
-              purpose: `Story ${tRow.wp_id} ${purpose}`,
-              paths,
-              allTracking,
-              warnings,
-            });
-            return resolved?.assetUid;
-          }
-          return undefined;
+          const resolved = await tryResolveWpImageWithFallback({
+            attachmentId,
+            imageUrl,
+            wp,
+            cs,
+            map,
+            mediaSheetPath,
+            folderUid,
+            locale,
+            purpose: `Story ${tRow.wp_id} ${purpose}`,
+            paths,
+            allTracking,
+            warnings,
+          });
+          return resolved?.assetUid;
         },
         bodySource,
         (msg) => console.error(`[blog] wp_id=${tRow.wp_id} body: ${msg}`),

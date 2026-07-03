@@ -194,7 +194,9 @@ export async function tryResolveWpImageAssetUid(
     return resolved;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error(`[asset] wp_id=${attachmentId} ${opts.purpose} FAIL: ${msg.slice(0, 200)}`);
-    throw e;
+    const warning = `${opts.purpose}: wp_id=${attachmentId} not resolved (${msg.slice(0, 200)})`;
+    opts.warnings?.add(warning);
+    console.error(`[asset] WARNING: ${warning}`);
+    return undefined;
   }
 }
