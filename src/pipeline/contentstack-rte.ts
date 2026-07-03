@@ -53,18 +53,55 @@ export function decodeHtmlEntities(input: string): string {
   return out;
 }
 
+/** Decode nested entities (`&amp;lt;a` → `<a`) until stable. */
+export function decodeHtmlEntitiesFully(input: string): string {
+  let out = input;
+  for (let i = 0; i < 5; i++) {
+    const next = decodeHtmlEntities(out);
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 /** Normalize WP text fields: decode entities and trim. */
 export function normalizeWpText(input: string): string {
   return decodeHtmlEntities(input).trim();
 }
 
 export function stripUnsafeHtml(html: string): string {
-  return decodeHtmlEntities(
+  return decodeHtmlEntitiesFully(
     html
       .replace(/<script[\s\S]*?<\/script>/gi, "")
       .replace(/<style[\s\S]*?<\/style>/gi, "")
       .trim()
   );
+}
+
+function pickHrefFromAnchorAttrs(rawAttrs: string): string | undefined {
+  const m = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(rawAttrs);
+  return m?.[1] ?? m?.[2] ?? m?.[3];
+}
+
+/** Normalize HTML for Contentstack body `text` fields — preserve links and block markup. */
+export function normalizeContentstackBodyHtml(html: string): string {
+  let out = stripUnsafeHtml(html);
+  if (!out) return "";
+
+  out = out.replace(/&lt;\s*(\/?)\s*a\b/gi, "<$1a");
+
+  out = out.replace(/<a\b([^>]*?)>/gi, (_match, rawAttrs: string) => {
+    const href = pickHrefFromAnchorAttrs(rawAttrs);
+    if (!href) return `<a${rawAttrs}>`;
+
+    let attrs = rawAttrs.replace(/\s*href\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i, "").trim();
+    if (!/target\s*=/i.test(attrs)) attrs += ' target="_blank"';
+    if (!/rel\s*=/i.test(attrs)) attrs += ' rel="noopener noreferrer"';
+    if (!/class\s*=/i.test(attrs)) attrs += ' class="embedded-link"';
+    return `<a href="${href}"${attrs ? ` ${attrs.trim()}` : ""}>`;
+  });
+
+  return out;
 }
 
 /** Plain text from WP HTML (for Text / Multi-line fields). */
