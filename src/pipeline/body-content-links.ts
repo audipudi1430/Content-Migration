@@ -179,6 +179,15 @@ function embeddedLinkAnchorHtml(link: ContentstackEmbeddedLink): string {
   );
 }
 
+/** Ensure a visible space around inline anchors when Gutenberg omits whitespace. */
+export function ensureEmbeddedLinkSpacing(html: string): string {
+  let out = html;
+  out = out.replace(/(<\/(?:em|strong|b|i|u|span|sub|sup)>)(<a\b)/gi, "$1 $2");
+  out = out.replace(/([A-Za-z0-9])(<a\b)/g, "$1 $2");
+  out = out.replace(/(<\/a>)([A-Za-z0-9])/g, "$1 $2");
+  return out;
+}
+
 async function createLinkEntryWithDuplicateFallback(
   cs: ContentstackManagementClient,
   contentTypeUid: string,
@@ -354,7 +363,7 @@ export async function transformBodyHtmlLinks(
   }
 
   parts.push(input.slice(lastIndex));
-  return parts.join("");
+  return ensureEmbeddedLinkSpacing(parts.join(""));
 }
 
 export async function transformLinksInModularBlocks(
