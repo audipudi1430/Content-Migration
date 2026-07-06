@@ -1,7 +1,8 @@
 import type { BlogBodyBlockUids, BlogBodySource } from "./blog-body-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
 import { contentstackEntryRefValue } from "./blog-payload.js";
-import { decodeHtmlEntities, htmlToPlainWithBreaks, normalizeContentstackBodyHtml, stripUnsafeHtml } from "./contentstack-rte.js";
+import { decodeHtmlEntities, htmlToPlainWithBreaks, sanitizeBodyHtmlForContentstack, stripUnsafeHtml } from "./contentstack-rte.js";
+import { transformLinksInModularBlocks, type BodyLinkResolver } from "./body-content-links.js";
 
 /** WordPress block — supports Gutenberg REST (`name`/`attributes`) and classic (`blockName`/`attrs`). */
 export type WpContentBlock = {
@@ -136,7 +137,7 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
     [uids.text.blockUid]: {
       [uids.text.groupTitle]: fields.groupTitle ? plainLabelText(fields.groupTitle) : "",
       [uids.text.subhead]: fields.subhead ? plainLabelText(fields.subhead) : "",
-      [uids.text.text]: fields.text ? normalizeContentstackBodyHtml(fields.text) : "",
+      [uids.text.text]: fields.text ? sanitizeBodyHtmlForContentstack(fields.text) : "",
     },
   };
 }
@@ -736,7 +737,8 @@ export async function buildBodyContentFromWpStory(
   resolveImage: BodyImageResolver,
   sourceMode: BlogBodySource = "blocks_then_rendered",
   log?: (msg: string) => void,
-  resolveVideo?: BodyVideoResolver
+  resolveVideo?: BodyVideoResolver,
+  resolveLink?: BodyLinkResolver
 ): Promise<BodyContentBuildResult> {
   const stats = {
     text: 0,
@@ -768,6 +770,9 @@ export async function buildBodyContentFromWpStory(
       segmentCursor
     );
     const blocks = consolidateModularTextBlocks(rawBlocks, uids);
+    if (resolveLink) {
+      await transformLinksInModularBlocks(blocks, uids, resolveLink, log);
+    }
     return { blocks, stats };
   }
 
@@ -842,6 +847,9 @@ export async function buildBodyContentFromWpStory(
   }
 
   const consolidated = consolidateModularTextBlocks(blocks, uids);
+  if (resolveLink) {
+    await transformLinksInModularBlocks(consolidated, uids, resolveLink, log);
+  }
   return { blocks: consolidated, stats };
 }
 

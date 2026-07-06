@@ -78,30 +78,16 @@ export function stripUnsafeHtml(html: string): string {
   );
 }
 
-function pickHrefFromAnchorAttrs(rawAttrs: string): string | undefined {
-  const m = /href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(rawAttrs);
-  return m?.[1] ?? m?.[2] ?? m?.[3];
-}
-
-/** Normalize HTML for Contentstack body `text` fields — preserve links and block markup. */
-export function normalizeContentstackBodyHtml(html: string): string {
+/** Sanitize body HTML — decode entities and strip unsafe tags; does not rewrite links. */
+export function sanitizeBodyHtmlForContentstack(html: string): string {
   let out = stripUnsafeHtml(html);
   if (!out) return "";
+  return out.replace(/&lt;\s*(\/?)\s*a\b/gi, "<$1a");
+}
 
-  out = out.replace(/&lt;\s*(\/?)\s*a\b/gi, "<$1a");
-
-  out = out.replace(/<a\b([^>]*?)>/gi, (_match, rawAttrs: string) => {
-    const href = pickHrefFromAnchorAttrs(rawAttrs);
-    if (!href) return `<a${rawAttrs}>`;
-
-    let attrs = rawAttrs.replace(/\s*href\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i, "").trim();
-    if (!/target\s*=/i.test(attrs)) attrs += ' target="_blank"';
-    if (!/rel\s*=/i.test(attrs)) attrs += ' rel="noopener noreferrer"';
-    if (!/class\s*=/i.test(attrs)) attrs += ' class="embedded-link"';
-    return `<a href="${href}"${attrs ? ` ${attrs.trim()}` : ""}>`;
-  });
-
-  return out;
+/** @deprecated Use `sanitizeBodyHtmlForContentstack` + `transformBodyHtmlLinks` for embedded link entries. */
+export function normalizeContentstackBodyHtml(html: string): string {
+  return sanitizeBodyHtmlForContentstack(html);
 }
 
 /** Plain text from WP HTML (for Text / Multi-line fields). */

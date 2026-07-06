@@ -22,6 +22,11 @@ import {
   loadBlogWpTaxonomyCategory,
 } from "./blog-config.js";
 import { loadBlogBodyBlockUids, loadBlogBodySource } from "./blog-body-config.js";
+import { loadBlogBodyLinksEnabled, loadLinksFieldUids } from "./blog-link-config.js";
+import {
+  ensureContentstackLinkEntry,
+  type ContentstackEmbeddedLink,
+} from "./body-content-links.js";
 import {
   buildBodyContentFromWpStory,
   logWpStoryContentForMapping,
@@ -143,6 +148,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
 
   const bodyUids = loadBlogBodyBlockUids();
   const bodySource = loadBlogBodySource();
+  const linksFields = loadLinksFieldUids();
+  const embedBodyLinks = loadBlogBodyLinksEnabled();
   const fetchBySlug = loadBlogFetchBySlug();
   const featuredImageTarget = loadBlogFeaturedImageTarget();
 
@@ -483,6 +490,40 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         );
       }
 
+      const linkCache = new Map<string, ContentstackEmbeddedLink | undefined>();
+      const resolveBodyLink = embedBodyLinks
+        ? async ({
+            href,
+            linkedText,
+            target,
+            rel,
+          }: {
+            href: string;
+            linkedText: string;
+            target?: string;
+            rel?: string;
+          }) => {
+            const cacheKey = `${href.trim().toLowerCase()}|${linkedText.trim().toLowerCase()}`;
+            if (linkCache.has(cacheKey)) return linkCache.get(cacheKey);
+            const resolved = await ensureContentstackLinkEntry({
+              href,
+              linkedText,
+              target,
+              rel,
+              cs,
+              map,
+              fields: linksFields,
+              locale,
+              allTracking,
+              wpBaseUrl: cfg.wp.baseUrl,
+              purpose: `Story ${tRow.wp_id} body link`,
+              warnings,
+            });
+            linkCache.set(cacheKey, resolved);
+            return resolved;
+          }
+        : undefined;
+
       const bodyResult = await buildBodyContentFromWpStory(
         story,
         bodyUids,
@@ -525,7 +566,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
             console.error(`[blog] wp_id=${tRow.wp_id} body video FAIL: ${msg.slice(0, 200)}`);
             return undefined;
           }
-        }
+        },
+        resolveBodyLink
       );
 
       if (bodyResult.blocks.length > 0) {
