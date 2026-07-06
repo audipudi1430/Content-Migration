@@ -1,7 +1,7 @@
 import type { BlogBodyBlockUids, BlogBodySource } from "./blog-body-config.js";
 import { contentstackFileRefValue } from "./blog-author-payload.js";
 import { contentstackEntryRefValue } from "./blog-payload.js";
-import { decodeHtmlEntities, htmlToPlainWithBreaks, stripUnsafeHtml } from "./contentstack-rte.js";
+import { decodeHtmlEntities, htmlToPlainWithBreaks, normalizeContentstackBodyHtml, stripUnsafeHtml } from "./contentstack-rte.js";
 
 /** WordPress block — supports Gutenberg REST (`name`/`attributes`) and classic (`blockName`/`attrs`). */
 export type WpContentBlock = {
@@ -112,15 +112,6 @@ function plainLabelText(html: string): string {
   return stripTags(decodeHtmlEntities(html)).replace(/\s+/g, " ").trim();
 }
 
-/** First N words of the article headline — contributor label on text modular blocks. */
-export function groupTitleFromHeadline(headline: string, wordCount?: number): string {
-  const raw = process.env.BLOG_BODY_GROUP_TITLE_WORD_COUNT ?? "3";
-  const parsed = wordCount ?? Number(raw);
-  const count = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 3;
-  const words = plainLabelText(headline).split(/\s+/).filter(Boolean);
-  return words.slice(0, count).join(" ");
-}
-
 function compactFields(fields: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(fields)) {
@@ -145,18 +136,18 @@ function textBlockPayload(uids: BlogBodyBlockUids, fields: {
     [uids.text.blockUid]: {
       [uids.text.groupTitle]: fields.groupTitle ? plainLabelText(fields.groupTitle) : "",
       [uids.text.subhead]: fields.subhead ? plainLabelText(fields.subhead) : "",
-      [uids.text.text]: fields.text ?? "",
+      [uids.text.text]: fields.text ? normalizeContentstackBodyHtml(fields.text) : "",
     },
   };
 }
 
-/** Non-mergeable rich text in a modular `text` block (lists, quotes, etc.). */
+/** Rich text that must stay in its own modular block (not merged with paragraphs/lists). */
 function isNonMergeableTextHtml(text: string): boolean {
-  return /<(ul|ol|table|blockquote|figure|iframe|video|audio)\b/i.test(text);
+  return /<(blockquote|figure|iframe|video|audio)\b/i.test(text);
 }
 
-/** Heading-only or paragraph-like modular `text` blocks (core/heading + core/paragraph). */
-function isHeadingOrParagraphTextBlock(
+/** Paragraph, list, or heading-only modular `text` blocks eligible for consolidation. */
+function isConsolidatableTextBlock(
   block: Record<string, unknown>,
   uids: BlogBodyBlockUids
 ): boolean {
@@ -166,9 +157,7 @@ function isHeadingOrParagraphTextBlock(
   const fields = inner as Record<string, unknown>;
   const subhead = pickString(fields[uids.text.subhead]);
   const text = pickString(fields[uids.text.text]);
-  const groupTitle = pickString(fields[uids.text.groupTitle]);
 
-  if (groupTitle) return false;
   if (subhead && !text) return true;
   if (text && !isNonMergeableTextHtml(text)) return true;
   return false;
@@ -180,7 +169,7 @@ function isHeadingOnlyTextFields(fields: Record<string, unknown>, uids: BlogBody
   return Boolean(subhead && !text);
 }
 
-function isParagraphOnlyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
+function isMergeableBodyTextFields(fields: Record<string, unknown>, uids: BlogBodyBlockUids): boolean {
   const subhead = pickString(fields[uids.text.subhead]);
   const text = pickString(fields[uids.text.text]);
   if (subhead || !text) return false;
@@ -195,8 +184,6 @@ function wrapParagraphHtml(html: string): string {
   return `<p>${trimmed}</p>`;
 }
 
-const PARAGRAPH_TEXT_JOIN = "&nbsp;";
-
 function joinParagraphHtml(parts: string[]): string {
   return parts
     .map((part) => {
@@ -206,7 +193,7 @@ function joinParagraphHtml(parts: string[]): string {
       return wrapParagraphHtml(trimmed);
     })
     .filter(Boolean)
-    .join(PARAGRAPH_TEXT_JOIN);
+    .join("");
 }
 
 function mergeParagraphOnlyRun(
@@ -256,12 +243,12 @@ function splitHeadingParagraphRuns(
   uids: BlogBodyBlockUids
 ): Record<string, unknown>[][] {
   const groups: Record<string, unknown>[][] = [];
-  let paragraphRun: Record<string, unknown>[] = [];
+  let bodyTextRun: Record<string, unknown>[] = [];
 
-  const flushParagraphRun = (): void => {
-    if (paragraphRun.length > 0) {
-      groups.push(paragraphRun);
-      paragraphRun = [];
+  const flushBodyTextRun = (): void => {
+    if (bodyTextRun.length > 0) {
+      groups.push(bodyTextRun);
+      bodyTextRun = [];
     }
   };
 
@@ -269,14 +256,14 @@ function splitHeadingParagraphRuns(
   while (idx < fields.length) {
     const field = fields[idx]!;
     if (isHeadingOnlyTextFields(field, uids)) {
-      flushParagraphRun();
+      flushBodyTextRun();
       const headingGroup = [field];
       idx += 1;
       while (idx < fields.length && isHeadingOnlyTextFields(fields[idx]!, uids)) {
         headingGroup.push(fields[idx]!);
         idx += 1;
       }
-      while (idx < fields.length && isParagraphOnlyTextFields(fields[idx]!, uids)) {
+      while (idx < fields.length && isMergeableBodyTextFields(fields[idx]!, uids)) {
         headingGroup.push(fields[idx]!);
         idx += 1;
       }
@@ -284,40 +271,19 @@ function splitHeadingParagraphRuns(
       continue;
     }
 
-    if (isParagraphOnlyTextFields(field, uids)) {
-      paragraphRun.push(field);
+    if (isMergeableBodyTextFields(field, uids)) {
+      bodyTextRun.push(field);
       idx += 1;
       continue;
     }
 
-    flushParagraphRun();
+    flushBodyTextRun();
     groups.push([field]);
     idx += 1;
   }
 
-  flushParagraphRun();
+  flushBodyTextRun();
   return groups;
-}
-
-function applyContributorGroupTitle(
-  blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids,
-  articleHeadline: string
-): Record<string, unknown>[] {
-  const prefix = groupTitleFromHeadline(articleHeadline);
-  if (!prefix) return blocks;
-
-  const textUid = uids.text.blockUid;
-  return blocks.map((block) => {
-    const inner = block[textUid];
-    if (!inner || typeof inner !== "object" || Array.isArray(inner)) return block;
-    return {
-      [textUid]: {
-        ...(inner as Record<string, unknown>),
-        [uids.text.groupTitle]: prefix,
-      },
-    };
-  });
 }
 
 function pushConsolidatedTextGroup(
@@ -330,7 +296,7 @@ function pushConsolidatedTextGroup(
     const text = pickString(group[0]![uids.text.text]);
     target.push(textBlockPayload(uids, {
       subhead: pickString(group[0]![uids.text.subhead]) || undefined,
-      text: text ? wrapParagraphHtml(text) : undefined,
+      text: text ? joinParagraphHtml([text]) : undefined,
     }));
     return;
   }
@@ -343,27 +309,26 @@ function pushConsolidatedTextGroup(
 
 /**
  * Merge body text into modular blocks:
- * - consecutive paragraphs → one text block
- * - heading + following paragraphs → one text block (new block per section)
- * - images, testimonials, videos, and lists stay separate blocks
+ * - consecutive paragraphs and lists → one text block
+ * - heading + following paragraphs/lists → one text block (new block per section)
+ * - images, testimonials, and videos stay separate blocks
  */
 export function consolidateModularTextBlocks(
   blocks: Record<string, unknown>[],
-  uids: BlogBodyBlockUids,
-  options?: { articleHeadline?: string }
+  uids: BlogBodyBlockUids
 ): Record<string, unknown>[] {
   const result: Record<string, unknown>[] = [];
   let i = 0;
 
   while (i < blocks.length) {
-    if (!isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+    if (!isConsolidatableTextBlock(blocks[i]!, uids)) {
       result.push(blocks[i]!);
       i += 1;
       continue;
     }
 
     const runFields: Record<string, unknown>[] = [];
-    while (i < blocks.length && isHeadingOrParagraphTextBlock(blocks[i]!, uids)) {
+    while (i < blocks.length && isConsolidatableTextBlock(blocks[i]!, uids)) {
       runFields.push(blocks[i]![uids.text.blockUid] as Record<string, unknown>);
       i += 1;
     }
@@ -373,7 +338,7 @@ export function consolidateModularTextBlocks(
     }
   }
 
-  return applyContributorGroupTitle(result, uids, options?.articleHeadline ?? "");
+  return result;
 }
 
 /** Wrap modular blocks in the Body Content global field object for CMA. */
@@ -612,6 +577,7 @@ type HtmlSegment =
   | { kind: "heading"; level: number; html: string }
   | { kind: "paragraph"; html: string }
   | { kind: "list"; html: string }
+  | { kind: "table"; html: string }
   | { kind: "figure"; html: string }
   | { kind: "quote"; html: string }
   | { kind: "image"; html: string; src: string; alt: string };
@@ -634,8 +600,16 @@ export function parseRenderedHtmlSegments(html: string): HtmlSegment[] {
       }),
     },
     {
-      re: /<figure[^>]*>[\s\S]*?<\/figure>/gi,
+      re: /<figure[^>]*wp-block-table[^>]*>[\s\S]*?<\/figure>/gi,
+      build: (m) => ({ kind: "table", html: m[0] ?? "" }),
+    },
+    {
+      re: /<figure(?![^>]*wp-block-table)[^>]*>[\s\S]*?<\/figure>/gi,
       build: (m) => ({ kind: "figure", html: m[0] ?? "" }),
+    },
+    {
+      re: /<table[^>]*>[\s\S]*?<\/table>/gi,
+      build: (m) => ({ kind: "table", html: m[0] ?? "" }),
     },
     {
       re: /<blockquote[^>]*>[\s\S]*?<\/blockquote>/gi,
@@ -741,7 +715,7 @@ class RenderedSegmentCursor {
 
   constructor(private readonly segments: HtmlSegment[]) {}
 
-  take(kind: "paragraph" | "heading"): HtmlSegment | undefined {
+  take(kind: "paragraph" | "heading" | "table"): HtmlSegment | undefined {
     while (this.idx < this.segments.length) {
       const seg = this.segments[this.idx]!;
       this.idx += 1;
@@ -749,12 +723,12 @@ class RenderedSegmentCursor {
     }
     return undefined;
   }
-}
 
-export type BodyContentBuildOptions = {
-  /** Article headline — first few words copied to each text block `group_title`. */
-  articleHeadline?: string;
-};
+  /** Advance past the next rendered segment of this kind (when block content came from attributes). */
+  skip(kind: "paragraph" | "heading" | "table"): void {
+    this.take(kind);
+  }
+}
 
 export async function buildBodyContentFromWpStory(
   story: Record<string, unknown>,
@@ -762,8 +736,7 @@ export async function buildBodyContentFromWpStory(
   resolveImage: BodyImageResolver,
   sourceMode: BlogBodySource = "blocks_then_rendered",
   log?: (msg: string) => void,
-  resolveVideo?: BodyVideoResolver,
-  options?: BodyContentBuildOptions
+  resolveVideo?: BodyVideoResolver
 ): Promise<BodyContentBuildResult> {
   const stats = {
     text: 0,
@@ -794,7 +767,7 @@ export async function buildBodyContentFromWpStory(
       log,
       segmentCursor
     );
-    const blocks = consolidateModularTextBlocks(rawBlocks, uids, options);
+    const blocks = consolidateModularTextBlocks(rawBlocks, uids);
     return { blocks, stats };
   }
 
@@ -832,6 +805,14 @@ export async function buildBodyContentFromWpStory(
       continue;
     }
 
+    if (seg.kind === "table") {
+      const text = stripUnsafeHtml(seg.html);
+      if (!text) continue;
+      blocks.push(textBlockPayload(uids, { text }));
+      stats.text += 1;
+      continue;
+    }
+
     if (seg.kind === "quote") {
       const { quote, author } = parseQuoteFromHtml(seg.html);
       if (!quote) continue;
@@ -860,7 +841,7 @@ export async function buildBodyContentFromWpStory(
     }
   }
 
-  const consolidated = consolidateModularTextBlocks(blocks, uids, options);
+  const consolidated = consolidateModularTextBlocks(blocks, uids);
   return { blocks: consolidated, stats };
 }
 
@@ -898,13 +879,13 @@ function paragraphHtmlFromBlock(
   let html = stripUnsafeHtml(block.innerHTML ?? "");
   if (!html) {
     const content = pickString(block.attrs?.content);
-    if (content) {
-      html = stripUnsafeHtml(content);
-    }
+    if (content) html = stripUnsafeHtml(content);
   }
   if (!html && segmentCursor) {
     const seg = segmentCursor.take("paragraph");
     if (seg?.kind === "paragraph") html = stripUnsafeHtml(seg.html);
+  } else if (html && segmentCursor) {
+    segmentCursor.skip("paragraph");
   }
   return html ? wrapParagraphHtml(html) : "";
 }
@@ -959,6 +940,113 @@ function listHtmlFromBlock(block: WpContentBlock): string {
   return "";
 }
 
+function tableCellHtml(content: string, tag: "th" | "td"): string {
+  const inner = stripUnsafeHtml(content);
+  return inner ? `<${tag}>${inner}</${tag}>` : `<${tag}></${tag}>`;
+}
+
+function tableRowHtmlFromBlock(rowBlock: WpContentBlock, defaultTag: "th" | "td"): string {
+  const normalized = normalizeWpBlock(rowBlock);
+  const cells = (normalized.innerBlocks ?? [])
+    .map((cellBlock) => {
+      const cell = normalizeWpBlock(cellBlock);
+      if (normalizeBlockName(cell.blockName) !== "core/table-cell") return "";
+      const tag = cell.attrs?.tag === "th" ? "th" : defaultTag;
+      const content = pickString(cell.attrs?.content) || stripUnsafeHtml(cell.innerHTML ?? "");
+      return tableCellHtml(content, tag);
+    })
+    .filter(Boolean);
+  if (cells.length > 0) return `<tr>${cells.join("")}</tr>`;
+
+  const rowHtml = stripUnsafeHtml(normalized.innerHTML ?? "");
+  if (rowHtml && /<tr\b/i.test(rowHtml)) return rowHtml;
+  return "";
+}
+
+function tableHtmlFromAttributes(attrs: Record<string, unknown>): string {
+  const headRows: string[] = [];
+  const bodyRows: string[] = [];
+
+  if (Array.isArray(attrs.head)) {
+    for (const row of attrs.head) {
+      if (!Array.isArray(row)) continue;
+      headRows.push(
+        `<tr>${row.map((cell) => tableCellHtml(String(cell ?? ""), "th")).join("")}</tr>`
+      );
+    }
+  }
+  if (Array.isArray(attrs.body)) {
+    for (const row of attrs.body) {
+      if (!Array.isArray(row)) continue;
+      bodyRows.push(
+        `<tr>${row.map((cell) => tableCellHtml(String(cell ?? ""), "td")).join("")}</tr>`
+      );
+    }
+  }
+
+  if (headRows.length === 0 && bodyRows.length === 0) return "";
+  const thead = headRows.length > 0 ? `<thead>${headRows.join("")}</thead>` : "";
+  const tbody = bodyRows.length > 0 ? `<tbody>${bodyRows.join("")}</tbody>` : "";
+  return `<figure class="wp-block-table"><table>${thead}${tbody}</table></figure>`;
+}
+
+function tableHtmlFromInnerBlocks(block: WpContentBlock): string {
+  const normalized = normalizeWpBlock(block);
+  const rows = (normalized.innerBlocks ?? [])
+    .map((rowBlock) => {
+      const rowName = normalizeBlockName(normalizeWpBlock(rowBlock).blockName);
+      if (rowName !== "core/table-row") return "";
+      const hasTh = (normalizeWpBlock(rowBlock).innerBlocks ?? []).some((cell) => {
+        const c = normalizeWpBlock(cell);
+        return normalizeBlockName(c.blockName) === "core/table-cell" && c.attrs?.tag === "th";
+      });
+      return tableRowHtmlFromBlock(rowBlock, hasTh ? "th" : "td");
+    })
+    .filter(Boolean);
+
+  if (rows.length === 0) return "";
+  const hasThRow = rows.some((row) => /<th\b/i.test(row));
+  if (hasThRow) {
+    const headEnd = rows.findIndex((row) => !/<th\b/i.test(row));
+    const headRows = headEnd === -1 ? rows : rows.slice(0, headEnd);
+    const bodyRows = headEnd === -1 ? [] : rows.slice(headEnd);
+    const thead = headRows.length > 0 ? `<thead>${headRows.join("")}</thead>` : "";
+    const tbody = bodyRows.length > 0 ? `<tbody>${bodyRows.join("")}</tbody>` : "";
+    return `<figure class="wp-block-table"><table>${thead}${tbody}</table></figure>`;
+  }
+  return `<figure class="wp-block-table"><table><tbody>${rows.join("")}</tbody></table></figure>`;
+}
+
+function tableHtmlFromBlock(
+  block: WpContentBlock,
+  segmentCursor?: RenderedSegmentCursor
+): string {
+  const normalized = normalizeWpBlock(block);
+  let html = stripUnsafeHtml(normalized.innerHTML ?? "");
+  if (html && /<table\b/i.test(html)) {
+    if (segmentCursor) segmentCursor.skip("table");
+    return html;
+  }
+
+  html = tableHtmlFromInnerBlocks(normalized);
+  if (html) {
+    if (segmentCursor) segmentCursor.skip("table");
+    return html;
+  }
+
+  html = tableHtmlFromAttributes(normalized.attrs ?? {});
+  if (html) {
+    if (segmentCursor) segmentCursor.skip("table");
+    return html;
+  }
+
+  if (segmentCursor) {
+    const seg = segmentCursor.take("table");
+    if (seg?.kind === "table") return stripUnsafeHtml(seg.html);
+  }
+  return "";
+}
+
 function headingFromBlock(
   block: WpContentBlock,
   segmentCursor?: RenderedSegmentCursor
@@ -971,6 +1059,8 @@ function headingFromBlock(
       text = plainLabelText(seg.html);
       level = seg.level;
     }
+  } else if (text && segmentCursor) {
+    segmentCursor.skip("heading");
   }
   if (!text) return undefined;
   return { text, level };
@@ -1045,6 +1135,18 @@ async function convertOneWpBlock(
     }
     outPushText(uids, { text: html }, stats, result);
     log?.(`mapped core/list as rich text (${isOrderedList(normalized.attrs) ? "ol" : "ul"})`);
+    return result;
+  }
+
+  if (name === "core/table") {
+    const html = tableHtmlFromBlock(normalized, segmentCursor);
+    if (!html) {
+      stats.skipped += 1;
+      log?.(`skipped core/table (no table content)`);
+      return [];
+    }
+    outPushText(uids, { text: html }, stats, result);
+    log?.(`mapped core/table as rich text`);
     return result;
   }
 
@@ -1154,7 +1256,9 @@ async function convertOneWpBlock(
   const unknownText =
     pickString(normalized.attrs?.content) || stripUnsafeHtml(normalized.innerHTML ?? "");
   if (unknownText) {
-    const html = wrapParagraphHtml(unknownText);
+    const html = /^<(p|h[1-6]|ul|ol|table|blockquote|figure)[\s>]/i.test(unknownText.trim())
+      ? unknownText.trim()
+      : wrapParagraphHtml(unknownText);
     outPushText(uids, { text: html }, stats, result);
     log?.(`mapped unknown block ${name} as text`);
     return result;

@@ -133,14 +133,14 @@ function uploadRelativePathCandidates(imageUrl: string): string[] {
  * Used for the fast `?slug=` lookup before deeper matching.
  */
 export function mediaSlugCandidatesFromUrl(imageUrl: string): string[] {
-  const out: string[] = [];
+  const raw: string[] = [];
   const rel = getUploadRelativePath(imageUrl);
   if (rel) {
     const file = rel.split("/").pop()!;
-    out.push(file, stripImageSizeSuffix(file));
+    raw.push(file, stripImageSizeSuffix(file));
     const noExt = file.replace(/\.[a-z0-9]{2,5}$/i, "");
     if (noExt && noExt !== file) {
-      out.push(noExt, stripImageSizeSuffix(noExt));
+      raw.push(noExt, stripImageSizeSuffix(noExt));
     }
   }
   try {
@@ -150,17 +150,28 @@ export function mediaSlugCandidatesFromUrl(imageUrl: string): string[] {
       .filter(Boolean);
     const last = parts[parts.length - 1];
     if (last && !/^\d{1,12}$/.test(last)) {
-      out.push(last, stripImageSizeSuffix(last));
+      raw.push(last, stripImageSizeSuffix(last));
       const noExt = last.replace(/\.[a-z0-9]{2,5}$/i, "");
-      if (noExt) out.push(noExt, stripImageSizeSuffix(noExt));
+      if (noExt) raw.push(noExt, stripImageSizeSuffix(noExt));
     }
   } catch {
     // ignore
   }
   const seen = new Set<string>();
-  return out
-    .map((s) => s.trim())
-    .filter((s) => s.length > 1 && s.length < 200 && !seen.has(s.toLowerCase()) && seen.add(s.toLowerCase()));
+  const out: string[] = [];
+  const add = (s: string) => {
+    const t = s.trim();
+    if (t.length <= 1 || t.length >= 200) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
+  for (const s of raw) {
+    add(s);
+    add(s.toLowerCase());
+  }
+  return out;
 }
 
 function pickRendered(field: unknown): string {

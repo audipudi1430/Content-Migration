@@ -9,10 +9,33 @@ export type WpFocalPoint = { x: number; y: number };
 
 export type StoryThumbnailSource = {
   attachmentId: number;
+  /** Public image URL from block attributes (cross-domain fallback when attachment id 404s). */
+  imageUrl?: string;
   focalPoint?: WpFocalPoint;
   /** WordPress block name or `featured_media`. */
   source: string;
 };
+
+function pickString(v: unknown): string {
+  if (v === undefined || v === null) return "";
+  return String(v).trim();
+}
+
+export function pickImageUrlFromBlockAttrs(attrs: Record<string, unknown>): string | undefined {
+  const direct =
+    pickString(attrs.url) ||
+    pickString(attrs.mediaUrl) ||
+    pickString(attrs.media_url) ||
+    pickString(attrs.src);
+  if (direct) return direct;
+
+  const image = attrs.image;
+  if (image && typeof image === "object" && !Array.isArray(image)) {
+    const o = image as { url?: unknown; source_url?: unknown };
+    return pickString(o.url) || pickString(o.source_url) || undefined;
+  }
+  return undefined;
+}
 
 function pickPositiveInt(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v) && v > 0) return Math.floor(v);
@@ -81,6 +104,18 @@ export function pickMediaIdFromBlockAttrs(attrs: Record<string, unknown>): numbe
 
 type BlockMediaHit = StoryThumbnailSource & { isHero: boolean; isMediaLike: boolean };
 
+function mediaHitFromBlock(name: string, attrs: Record<string, unknown>, attachmentId: number): BlockMediaHit {
+  const isFeaturedBlock = isFeaturedImageBlockName(name);
+  return {
+    attachmentId,
+    imageUrl: pickImageUrlFromBlockAttrs(attrs),
+    focalPoint: pickFocalPointFromAttrs(attrs),
+    source: name || "block",
+    isHero: isHeroMediaBlockName(name),
+    isMediaLike: isMediaLikeBlockName(name) || isFeaturedBlock,
+  };
+}
+
 function walkBlocksForMedia(blocks: WpContentBlock[]): BlockMediaHit[] {
   const hits: BlockMediaHit[] = [];
   for (const raw of blocks) {
@@ -89,14 +124,7 @@ function walkBlocksForMedia(blocks: WpContentBlock[]): BlockMediaHit[] {
     const attrs = blockAttrs(block);
     const attachmentId = pickMediaIdFromBlockAttrs(attrs);
     if (attachmentId) {
-      const isFeaturedBlock = isFeaturedImageBlockName(name);
-      hits.push({
-        attachmentId,
-        focalPoint: pickFocalPointFromAttrs(attrs),
-        source: name || "block",
-        isHero: isHeroMediaBlockName(name),
-        isMediaLike: isMediaLikeBlockName(name) || isFeaturedBlock,
-      });
+      hits.push(mediaHitFromBlock(name, attrs, attachmentId));
     }
     if (block.innerBlocks?.length) {
       hits.push(...walkBlocksForMedia(block.innerBlocks));
@@ -121,6 +149,7 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
   if (heroHit) {
     return {
       attachmentId: heroHit.attachmentId,
+      imageUrl: heroHit.imageUrl,
       focalPoint: heroHit.focalPoint,
       source: heroHit.source,
     };
@@ -135,6 +164,7 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
   if (featuredBlockHit) {
     return {
       attachmentId: featuredBlockHit.attachmentId,
+      imageUrl: featuredBlockHit.imageUrl,
       focalPoint: featuredBlockHit.focalPoint,
       source: featuredBlockHit.source,
     };
@@ -144,6 +174,7 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
   if (mediaHit) {
     return {
       attachmentId: mediaHit.attachmentId,
+      imageUrl: mediaHit.imageUrl,
       focalPoint: mediaHit.focalPoint,
       source: mediaHit.source,
     };
@@ -153,6 +184,7 @@ export function pickStoryThumbnailSource(story: Record<string, unknown>): StoryT
   if (anyHit) {
     return {
       attachmentId: anyHit.attachmentId,
+      imageUrl: anyHit.imageUrl,
       focalPoint: anyHit.focalPoint,
       source: anyHit.source,
     };

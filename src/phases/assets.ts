@@ -1,4 +1,6 @@
 import type { MigrationPhase } from "./types.js";
+import { prepareImageUploadBuffer } from "../pipeline/image-compress.js";
+import { kindFromMimeType } from "../media/mime.js";
 
 type WpMedia = {
   id: number;
@@ -98,10 +100,29 @@ export const phaseAssets: MigrationPhase = {
                 : filename;
 
             const { buffer, contentType } = await ctx.wp.fetchBinary(m.source_url);
+            const mimeType = m.mime_type || contentType;
+            let uploadBuffer = buffer;
+            let uploadContentType = mimeType;
+            let uploadFilename = filename;
+
+            if (kindFromMimeType(mimeType) === "image") {
+              const prepared = await prepareImageUploadBuffer({
+                buffer,
+                contentType: mimeType,
+                filename,
+              });
+              uploadBuffer = prepared.buffer;
+              uploadContentType = prepared.contentType;
+              uploadFilename = prepared.filename;
+              if (prepared.warning) {
+                console.error(`[asset] wp_id=${m.id} ${prepared.warning}`);
+              }
+            }
+
             const { uid } = await ctx.cs.uploadAssetFile({
-              buffer,
-              filename,
-              contentType: m.mime_type || contentType,
+              buffer: uploadBuffer,
+              filename: uploadFilename,
+              contentType: uploadContentType,
               title,
               parentFolderUid: folderUid,
             });

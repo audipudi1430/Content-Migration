@@ -4,6 +4,12 @@ import { WordPressClient } from "../wordpress/client.js";
 import { readMediaSheet, saveMediaSheet, toSheetRow } from "../media/sheet.js";
 import { fetchWpMediaItem, migrateOneMediaRow } from "../media/migrate-media-core.js";
 import { kindFromMimeType } from "../media/mime.js";
+import {
+  csAssetFileSizeBytes,
+  exceedsImageSizeLimit,
+  formatFileSizeBytes,
+  loadMigrationImageMaxBytes,
+} from "./image-size-limit.js";
 
 /**
  * Ensure a WordPress media attachment exists as a Contentstack **image** asset UID.
@@ -19,11 +25,17 @@ export async function ensureWpAttachmentImageAssetUid(
   locale: string | undefined,
   purpose: string
 ): Promise<string> {
+  const max = loadMigrationImageMaxBytes();
   const mapped = map.get("asset", attachmentId);
   if (mapped?.assetUid && (await cs.assetExists(mapped.assetUid))) {
-    return mapped.assetUid;
-  }
-  if (mapped?.assetUid) {
+    const csSize = await csAssetFileSizeBytes(cs, mapped.assetUid);
+    if (csSize === undefined || !exceedsImageSizeLimit(csSize, max)) {
+      return mapped.assetUid;
+    }
+    console.error(
+      `[asset] wp_id=${attachmentId} map uid=${mapped.assetUid} ${csSize !== undefined ? formatFileSizeBytes(csSize) : "size unknown"} exceeds ${formatFileSizeBytes(max)}; re-migrating (${purpose})`
+    );
+  } else if (mapped?.assetUid) {
     console.error(
       `[asset] wp_id=${attachmentId} map uid=${mapped.assetUid} not in this stack; re-migrating (${purpose})`
     );
@@ -33,19 +45,26 @@ export async function ensureWpAttachmentImageAssetUid(
   let mRow = mediaRows.find((m) => m.wp_id === attachmentId);
   if (mRow?.migration_status === "Pass" && mRow.contentstack_type === "asset" && mRow.contentstack_uid) {
     if (await cs.assetExists(mRow.contentstack_uid)) {
-      map.set({
-        wpId: attachmentId,
-        kind: "asset",
-        assetUid: mRow.contentstack_uid,
-        sourceKey: mRow.wp_slug,
-        migratedAt: new Date().toISOString(),
-        locale,
-      });
-      return mRow.contentstack_uid;
+      const csSize = await csAssetFileSizeBytes(cs, mRow.contentstack_uid);
+      if (csSize === undefined || !exceedsImageSizeLimit(csSize, max)) {
+        map.set({
+          wpId: attachmentId,
+          kind: "asset",
+          assetUid: mRow.contentstack_uid,
+          sourceKey: mRow.wp_slug,
+          migratedAt: new Date().toISOString(),
+          locale,
+        });
+        return mRow.contentstack_uid;
+      }
+      console.error(
+        `[asset] wp_id=${attachmentId} sheet uid=${mRow.contentstack_uid} oversized; re-migrating (${purpose})`
+      );
+    } else {
+      console.error(
+        `[asset] wp_id=${attachmentId} sheet uid=${mRow.contentstack_uid} not in this stack; re-migrating (${purpose})`
+      );
     }
-    console.error(
-      `[asset] wp_id=${attachmentId} sheet uid=${mRow.contentstack_uid} not in this stack; re-migrating (${purpose})`
-    );
   }
 
   const item = await fetchWpMediaItem(wp, attachmentId);

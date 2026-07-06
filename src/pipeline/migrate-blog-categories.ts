@@ -157,7 +157,10 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
         `[blog-category] wp_id=${term.id} WARNING: category_thumbnail omitted (image size limit); see migration_message`
       );
     } else {
-      throw new Error(`category_thumbnail: og_image not resolved (${ogImageUrl})`);
+      warnings.add(`category_thumbnail: og_image not resolved (${ogImageUrl})`);
+      console.error(
+        `[blog-category] wp_id=${term.id} WARNING: category_thumbnail omitted (og_image not resolved)`
+      );
     }
   }
 

@@ -5,6 +5,7 @@ import { kindFromMimeType } from "./mime.js";
 import type { MediaSheetRow, WpMediaItem } from "./types.js";
 import { filenameForMedia, stripHtml } from "./utils.js";
 import { WordPressClient } from "../wordpress/client.js";
+import { prepareImageUploadBuffer } from "../pipeline/image-compress.js";
 
 export async function ensureAssetFolderUid(
   map: MappingStore,
@@ -53,10 +54,28 @@ export async function migrateOneMediaRow(
     title: { rendered: row.wp_title },
   });
   const { buffer, contentType } = await wp.fetchBinary(row.wp_source_url);
+  let uploadBuffer = buffer;
+  let uploadContentType = mimeType || contentType;
+  let uploadFilename = filename;
+
+  if (mediaKind === "image") {
+    const prepared = await prepareImageUploadBuffer({
+      buffer,
+      contentType: uploadContentType,
+      filename,
+    });
+    uploadBuffer = prepared.buffer;
+    uploadContentType = prepared.contentType;
+    uploadFilename = prepared.filename;
+    if (prepared.warning) {
+      console.error(`[asset] wp_id=${row.wp_id} ${prepared.warning}`);
+    }
+  }
+
   const uploaded = await cs.uploadAssetFile({
-    buffer,
-    filename,
-    contentType: mimeType || contentType,
+    buffer: uploadBuffer,
+    filename: uploadFilename,
+    contentType: uploadContentType,
     title,
     parentFolderUid: folderUid,
   });
