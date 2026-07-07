@@ -55,6 +55,13 @@ import {
 } from "./blog-story-fetch.js";
 import { extractWpStorySeo, pickYoastOgImageUrl } from "./blog-seo.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
+import {
+  mappingSourceKeyWithMicrosite,
+  micrositeLabel,
+  resolveCmsAssetName,
+  resolveExistingUidForCmsAssetName,
+  usesMicrositeCmsAssetName,
+} from "./cms-asset-name.js";
 import { normalizeWpText } from "./contentstack-rte.js";
 import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-upsert.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
@@ -214,12 +221,14 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
     if (!trackRef) continue;
 
     const warnings = new MigrationWarnings();
+    const microsite = trackRef.microsite || paths.microsite;
+    const useMicrositeTitle = usesMicrositeCmsAssetName(microsite);
 
     try {
       const mapRecord = map.get("story", tRow.wp_id, locale);
-      const existingUid = resolveExistingEntryUid(mapRecord, trackRef);
+      let existingUid = resolveExistingEntryUid(mapRecord, trackRef);
 
-      if (!updateExisting && existingUid) {
+      if (!updateExisting && existingUid && !useMicrositeTitle) {
         trackRef.contentstack_entry_uid = existingUid;
         trackRef.migration_status = "Pass";
         trackRef.migration_message = "Already in JSON map (use --update to refresh from WordPress)";
@@ -250,6 +259,30 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
       );
       logWpStoryContentForMapping(tRow.wp_id, story);
 
+      const slug = pickString(story.slug) || String(tRow.wp_id);
+      const sheetCols = parseStorySheetColumns(trackRef);
+      const wpTitle =
+        pickRenderedTitle(story.title) ||
+        normalizeWpText(pickString(story.name)) ||
+        `Story ${story.id ?? tRow.wp_id}`;
+      const cmsTitle = wpTitle;
+      const cmsAssetName = resolveCmsAssetName(cmsTitle, { locale, microsite });
+      existingUid = await resolveExistingUidForCmsAssetName({
+        cs,
+        contentTypeUid,
+        cmsAssetName,
+        locale,
+        microsite,
+        updateExisting,
+        fallbackUid: existingUid,
+      });
+
+      if (useMicrositeTitle) {
+        console.error(
+          `[blog] wp_id=${tRow.wp_id} microsite=${micrositeLabel(microsite)} cmsAssetName="${cmsAssetName}"`
+        );
+      }
+
       let existingEntry: Record<string, unknown> | undefined;
       if (existingUid) {
         try {
@@ -262,13 +295,6 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         }
       }
 
-      const slug = pickString(story.slug) || String(tRow.wp_id);
-      const sheetCols = parseStorySheetColumns(trackRef);
-      const wpTitle =
-        pickRenderedTitle(story.title) ||
-        normalizeWpText(pickString(story.name)) ||
-        `Story ${story.id ?? tRow.wp_id}`;
-      const cmsTitle = wpTitle;
       const headlineFromSheet = sheetCols.headline.trim() || undefined;
       if (headlineFromSheet) {
         console.error(`[blog] wp_id=${tRow.wp_id} headline from sheet="${headlineFromSheet}"`);
@@ -669,7 +695,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         `[blog] wp_id=${tRow.wp_id} seo payload: ${JSON.stringify(entryPayload[fields.seoSocialGroup])}`
       );
 
-      if (updateExisting && !existingUid) {
+      if (updateExisting && !existingUid && !useMicrositeTitle) {
         throw new Error(
           "No Contentstack entry UID in map or tracking; run migrate without --update first"
         );
@@ -703,7 +729,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
           modularBodyImageFileField: bodyUids.image.file,
         },
         logContext: logCtx,
-        resolveDuplicateTitle: true,
+        resolveDuplicateTitle: !useMicrositeTitle,
       });
 
       const allWarnings = warnings.join();
@@ -727,7 +753,7 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         wpId: tRow.wp_id,
         kind: "story",
         contentstackUid: entryUid,
-        sourceKey: slug,
+        sourceKey: mappingSourceKeyWithMicrosite(slug, microsite),
         migratedAt: new Date().toISOString(),
         locale,
       });

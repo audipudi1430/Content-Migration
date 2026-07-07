@@ -29,7 +29,12 @@ import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-ups
 import { assertCreateOnlyNoExistingEntry } from "./create-only-entry.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
-import { resolveCmsAssetName } from "./cms-asset-name.js";
+import {
+  mappingSourceKeyWithMicrosite,
+  resolveCmsAssetName,
+  resolveExistingUidForCmsAssetName,
+  usesMicrositeCmsAssetName,
+} from "./cms-asset-name.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import { normalizeWpText } from "./contentstack-rte.js";
 import {
@@ -348,26 +353,8 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
 
       const sheetOnly = wpId <= 0;
       let mapRecord: MappingRecord | undefined;
-      let existingUid: string | undefined;
       let term: WpStoryCategory;
-
-      if (sheetOnly) {
-        const prelim = buildSheetOnlyCategoryTerm(trackRef);
-        const mapKey = categoryMappingSourceKey(trackRef, prelim.slug);
-        mapRecord = map.get("category", 0, locale, mapKey);
-        existingUid = resolveExistingEntryUid(mapRecord, trackRef);
-      } else {
-        mapRecord = map.get("category", wpId, locale);
-        existingUid = resolveExistingEntryUid(mapRecord, trackRef);
-      }
-
-      if (!updateExisting && existingUid) {
-        assertCreateOnlyNoExistingEntry({
-          wpId: sheetOnly ? 0 : wpId,
-          existingUid,
-          entityLabel: "blog_category",
-        });
-      }
+      const microsite = trackRef.microsite || paths.microsite;
 
       if (!sheetOnly) {
         const rel = `${restBase.replace(/^\//, "")}/${wpId}`;
@@ -377,6 +364,39 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         console.error(
           `[blog-category] wp_id=0 sheet-only create name="${term.name}" slug=${term.slug} new_url=${trackRef.new_url || "(none)"}`
         );
+      }
+
+      const slug = pickString(term.slug) || String(term.id);
+
+      if (sheetOnly) {
+        const mapKey = categoryMappingSourceKey(trackRef, slug);
+        mapRecord = map.get("category", 0, locale, mapKey);
+      } else {
+        mapRecord = map.get("category", wpId, locale);
+      }
+
+      const sheet = parseCategorySheetColumns(trackRef);
+      const wpName = normalizeWpText(pickString(term.name)) || `Category ${term.id}`;
+      const displayName = normalizeWpText(sheet.categoryName || wpName);
+      const cmsAssetName = resolveCmsAssetName(displayName, { locale, microsite });
+      const useMicrositeTitle = usesMicrositeCmsAssetName(microsite);
+
+      let existingUid = await resolveExistingUidForCmsAssetName({
+        cs,
+        contentTypeUid,
+        cmsAssetName,
+        locale,
+        microsite,
+        updateExisting,
+        fallbackUid: resolveExistingEntryUid(mapRecord, trackRef),
+      });
+
+      if (!updateExisting && existingUid && !useMicrositeTitle) {
+        assertCreateOnlyNoExistingEntry({
+          wpId: sheetOnly ? 0 : wpId,
+          existingUid,
+          entityLabel: "blog_category",
+        });
       }
 
       let existingEntry: Record<string, unknown> | undefined;
@@ -391,7 +411,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         }
       }
 
-      const { payload: entryPayload, slug } = await buildBlogCategoryEntryPayload({
+      const { payload: entryPayload } = await buildBlogCategoryEntryPayload({
         term,
         fields,
         wp,
@@ -407,7 +427,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         existingEntry,
       });
 
-      if (updateExisting && !existingUid) {
+      if (updateExisting && !existingUid && !useMicrositeTitle) {
         throw new Error(
           "No Contentstack entry UID in map or tracking; run migrate without --update first"
         );
@@ -429,7 +449,7 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
           metaImageFileField: fields.metaImageFileField,
         },
         logContext: logCtx,
-        resolveDuplicateTitle: !updateExisting,
+        resolveDuplicateTitle: !updateExisting && !useMicrositeTitle,
         retrySeoPageUrl: false,
         retryImageSizeErrors: true,
       });
@@ -454,7 +474,9 @@ export async function runMigrateBlogCategoriesFromTracking(argv: string[]): Prom
         wpId: sheetOnly ? 0 : wpId,
         kind: "category",
         contentstackUid: entryUid,
-        sourceKey: sheetOnly ? categoryMappingSourceKey(trackRef, slug) : slug,
+        sourceKey: sheetOnly
+          ? categoryMappingSourceKey(trackRef, slug)
+          : mappingSourceKeyWithMicrosite(slug, microsite),
         migratedAt: new Date().toISOString(),
         locale,
       });
