@@ -29,6 +29,7 @@ import { upsertContentstackEntryWithSeoFallback } from "./contentstack-entry-ups
 import { assertCreateOnlyNoExistingEntry } from "./create-only-entry.js";
 import { MigrationWarnings, mergeMigrationMessages } from "./image-size-limit.js";
 import { tryResolveWpImageAssetFromUrl } from "./resolve-wp-image-from-url.js";
+import { resolveCmsAssetName } from "./cms-asset-name.js";
 import { resolveMigrationPageUrlForRow, withMigrationPageUrl } from "./migration-url.js";
 import { normalizeWpText } from "./contentstack-rte.js";
 import {
@@ -81,6 +82,10 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   const useRest = !sheetOnly;
   const wpName = normalizeWpText(pickString(term.name)) || `Category ${term.id}`;
   const displayName = normalizeWpText(sheet.categoryName || wpName);
+  const cmsAssetName = resolveCmsAssetName(displayName, {
+    locale: ctx.locale,
+    microsite: ctx.trackRef.microsite || ctx.paths.microsite,
+  });
   const slug = pickString(term.slug) || String(term.id);
   const { path: pageUrl, source: pageUrlSource } = resolveMigrationPageUrlForRow(
     trackRef,
@@ -92,10 +97,10 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
   const ogImageUrl = useRest ? pickYoastOgImageUrl(term) : "";
 
   const entryPayload: Record<string, unknown> = {
-    title: displayName,
+    title: cmsAssetName,
   };
 
-  setScalar(entryPayload, fields.cmsAssetName, displayName);
+  setScalar(entryPayload, fields.cmsAssetName, cmsAssetName);
   setScalar(entryPayload, fields.url, pageUrl);
   setScalar(entryPayload, fields.blogCategoryName, displayName);
   setScalar(entryPayload, fields.categoryNameAlias, displayName);
@@ -107,7 +112,7 @@ async function buildBlogCategoryEntryPayload(ctx: BuildCategoryPayloadCtx): Prom
 
   console.error(
     `[blog-category] wp_id=${term.id} sheet name="${sheet.categoryName || "(none)"}" ` +
-      `displayName="${displayName}" show_url=${sheet.showUrl} ` +
+      `displayName="${displayName}" cmsAssetName="${cmsAssetName}" show_url=${sheet.showUrl} ` +
       `level=${sheet.categoryLevel || sheet.levelRaw || "(none)"} ` +
       `rest=${useRest ? "yes" : "no"} pageUrl=${pageUrl} (${pageUrlSource})`
   );

@@ -7,6 +7,7 @@ import {
 } from "./blog-author-payload.js";
 import { setSeoSocialGroup, type SeoLogContext } from "./seo-social-payload.js";
 import { normalizeWpText } from "./contentstack-rte.js";
+import { resolveCmsAssetName } from "./cms-asset-name.js";
 import { pickWpStoryDateline } from "./wp-dateline.js";
 
 export { pickRenderedTitle };
@@ -126,6 +127,9 @@ export type BuildBlogPayloadInput = {
     byline: string;
     blogTopics: string;
   };
+  locale?: string;
+  /** From `MIGRATION_MICROSITE` / tracking row — suffix for non-English CMS Asset Name. */
+  microsite?: string;
 };
 
 export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<string, unknown> {
@@ -145,6 +149,8 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
     seriesRefContentTypeUid,
     selectDefaults,
     metaKeys,
+    locale,
+    microsite,
   } = input;
 
   const meta =
@@ -152,7 +158,8 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
       ? (story.meta as Record<string, unknown>)
       : undefined;
 
-  const entryTitle = cmsTitle.trim() || "Untitled";
+  const displayTitle = cmsTitle.trim() || "Untitled";
+  const entryTitle = resolveCmsAssetName(displayTitle, { locale, microsite });
 
   const entry: Record<string, unknown> = {
     title: entryTitle,
@@ -160,9 +167,9 @@ export function buildBlogEntryPayload(input: BuildBlogPayloadInput): Record<stri
 
   setScalar(entry, fields.cmsAssetName, entryTitle);
   setScalar(entry, fields.url, pageUrl);
-  setScalar(entry, fields.headline, headlineOverride?.trim() || entryTitle);
+  setScalar(entry, fields.headline, headlineOverride?.trim() || displayTitle);
   setScalar(entry, fields.subHeader, pickMetaString(meta, metaKeys.subHeader));
-  setScalar(entry, fields.shortLinkText, entryTitle);
+  setScalar(entry, fields.shortLinkText, displayTitle);
   setScalar(entry, fields.dateline, pickWpStoryDateline(story) ?? new Date().toISOString());
   setScalar(entry, fields.byline, bylineOverride?.trim() || pickMetaString(meta, metaKeys.byline));
 

@@ -402,6 +402,8 @@ export async function runMigrateBlogStoriesFromTracking(argv: string[]): Promise
         seriesRefContentTypeUid: seriesRefContentTypeUid || undefined,
         selectDefaults,
         metaKeys,
+        locale,
+        microsite: trackRef.microsite || paths.microsite,
       });
 
       const thumbSource = pickStoryThumbnailSource(story);
