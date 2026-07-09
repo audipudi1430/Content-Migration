@@ -1,27 +1,13 @@
 import type { ContentstackManagementClient } from "../contentstack/client.js";
 
-type FolderRecord = { uid: string; name: string; parent_uid?: string };
-
 /** Resolve or create Contentstack asset folders mirroring a relative path. */
 export class ContentstackAssetFolderTree {
   private readonly folderByParentAndName = new Map<string, string>();
-  private allFolders: FolderRecord[] | undefined;
 
   constructor(private readonly cs: ContentstackManagementClient) {}
 
   private cacheKey(parentUid: string, name: string): string {
     return `${parentUid}|${name}`;
-  }
-
-  private async loadFolders(): Promise<FolderRecord[]> {
-    if (!this.allFolders) {
-      this.allFolders = await this.cs.getAssetFolders();
-      for (const f of this.allFolders) {
-        const parent = f.parent_uid ?? "";
-        this.folderByParentAndName.set(this.cacheKey(parent, f.name), f.uid);
-      }
-    }
-    return this.allFolders;
   }
 
   async ensureFolder(name: string, parentUid: string): Promise<string> {
@@ -32,19 +18,24 @@ export class ContentstackAssetFolderTree {
     const cached = this.folderByParentAndName.get(key);
     if (cached) return cached;
 
-    await this.loadFolders();
-    const existing = this.allFolders!.find(
-      (f) => f.name === folderName && (f.parent_uid ?? "") === parentUid
-    );
+    const existing = await this.cs.findAssetFolderByName(folderName, parentUid);
     if (existing) {
       this.folderByParentAndName.set(key, existing.uid);
       return existing.uid;
     }
 
-    const created = await this.cs.createAssetFolder(folderName, parentUid);
-    this.folderByParentAndName.set(key, created.uid);
-    this.allFolders!.push({ uid: created.uid, name: folderName, parent_uid: parentUid });
-    return created.uid;
+    try {
+      const created = await this.cs.createAssetFolder(folderName, parentUid);
+      this.folderByParentAndName.set(key, created.uid);
+      return created.uid;
+    } catch (e) {
+      const again = await this.cs.findAssetFolderByName(folderName, parentUid);
+      if (again) {
+        this.folderByParentAndName.set(key, again.uid);
+        return again.uid;
+      }
+      throw e;
+    }
   }
 
   /**

@@ -16,9 +16,9 @@ export async function ensureAssetFolderUid(
   if (folderUid) return folderUid;
 
   try {
-    const existingFolders = await cs.getAssetFolders();
-    const existing = existingFolders.find(
-      (f) => f.name === settings.folderName && f.parent_uid === settings.parentFolderUid
+    const existing = await cs.findAssetFolderByName(
+      settings.folderName,
+      settings.parentFolderUid ?? "cs_root"
     );
     if (existing) {
       map.setWpMediaAssetFolderUid(existing.uid);
@@ -29,7 +29,10 @@ export async function ensureAssetFolderUid(
     // proceed to create
   }
 
-  const created = await cs.createAssetFolder(settings.folderName, settings.parentFolderUid);
+  const created = await cs.createAssetFolder(
+    settings.folderName,
+    settings.parentFolderUid
+  );
   map.setWpMediaAssetFolderUid(created.uid);
   await map.save().catch(() => undefined);
   return created.uid;

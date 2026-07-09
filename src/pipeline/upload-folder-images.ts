@@ -147,6 +147,16 @@ export async function runUploadFolderImages(argv: string[]): Promise<void> {
     throw new Error(`Local folder is not a directory: ${localRoot}`);
   }
 
+  try {
+    await cs.getAssetSubfolders(csParentUid);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `CS_ASSET_FOLDER_UID="${csParentUid}" is not a valid Contentstack asset folder. ` +
+        `Open Contentstack → Assets, select the target folder, and copy its folder UID from the URL or folder details. ${msg}`
+    );
+  }
+
   let sheetRows = readFolderImagesWorkbook(workbookPath);
   const byRelative = new Map(
     sheetRows.map((r) => [r.relative_path.replace(/\\/g, "/"), r] as const)

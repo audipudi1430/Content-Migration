@@ -121,28 +121,77 @@ export class ContentstackManagementClient {
     return undefined;
   }
 
-  /**
-   * Get asset folders. Returns all folders (fetches with high limit).
-   */
-  async getAssetFolders(): Promise<{ uid: string; name: string; parent_uid?: string }[]> {
+  /** Fetch subfolders of a parent asset folder (CMA: GET /assets?folder=…&include_folders=true). */
+  async getAssetSubfolders(
+    parentFolderUid: string
+  ): Promise<{ uid: string; name: string; parent_uid?: string }[]> {
     const folders: { uid: string; name: string; parent_uid?: string }[] = [];
     let skip = 0;
     const limit = 100;
     while (true) {
-      const url = `${this.base()}/assets/folders?limit=${limit}&skip=${skip}`;
+      const params = new URLSearchParams({
+        folder: parentFolderUid,
+        include_folders: "true",
+        query: JSON.stringify({ is_dir: true }),
+        limit: String(limit),
+        skip: String(skip),
+      });
+      const url = `${this.base()}/assets?${params}`;
       const res = await fetch(url, { headers: this.headers() });
       const text = await res.text();
-      if (!res.ok) throw new Error(`Contentstack ${res.status} GET folders: ${text.slice(0, 800)}`);
+      if (!res.ok) {
+        throw new Error(`Contentstack ${res.status} GET asset subfolders: ${text.slice(0, 800)}`);
+      }
       const json = JSON.parse(text) as {
-        asset_folders?: { uid: string; name: string; parent_uid?: string }[];
-        assets?: { uid: string; name: string; parent_uid?: string }[];
+        assets?: { uid: string; name: string; parent_uid?: string; is_dir?: boolean }[];
       };
-      const items = json.asset_folders ?? json.assets ?? [];
-      folders.push(...items);
+      const items = (json.assets ?? []).filter((a) => a.is_dir !== false && a.uid && a.name);
+      folders.push(
+        ...items.map((a) => ({ uid: a.uid, name: a.name, parent_uid: a.parent_uid }))
+      );
       if (items.length < limit) break;
       skip += limit;
     }
     return folders;
+  }
+
+  /** Find a child folder by exact name under a parent folder. */
+  async findAssetFolderByName(
+    name: string,
+    parentFolderUid: string
+  ): Promise<{ uid: string; name: string; parent_uid?: string } | undefined> {
+    const folderName = name.trim();
+    if (!folderName) return undefined;
+
+    const params = new URLSearchParams({
+      folder: parentFolderUid,
+      include_folders: "true",
+      query: JSON.stringify({ is_dir: true, name: folderName }),
+      limit: "10",
+    });
+    const url = `${this.base()}/assets?${params}`;
+    const res = await fetch(url, { headers: this.headers() });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} GET asset folder by name: ${text.slice(0, 800)}`);
+    }
+    const json = JSON.parse(text) as {
+      assets?: { uid: string; name: string; parent_uid?: string; is_dir?: boolean }[];
+    };
+    return (json.assets ?? []).find(
+      (a) =>
+        a.is_dir !== false &&
+        a.name === folderName &&
+        (a.parent_uid ?? "") === parentFolderUid
+    );
+  }
+
+  /**
+   * Get top-level asset folders under stack root (`cs_root`).
+   * Prefer `getAssetSubfolders` / `findAssetFolderByName` when the parent is known.
+   */
+  async getAssetFolders(): Promise<{ uid: string; name: string; parent_uid?: string }[]> {
+    return this.getAssetSubfolders("cs_root");
   }
 
   /**
