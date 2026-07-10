@@ -194,10 +194,19 @@ async function createLinkEntryWithDuplicateFallback(
   payload: Record<string, unknown> & { title: string },
   locale: string | undefined,
   purpose: string
-): Promise<string> {
+): Promise<{ uid: string; reused: boolean }> {
+  const existing = await cs.findEntryUidsByExactTitle(contentTypeUid, payload.title, locale);
+  if (existing.length > 0) {
+    const existingUid = existing[0]!;
+    console.error(
+      `[link] ${purpose} reusing existing entry ${existingUid} (title="${payload.title}")`
+    );
+    return { uid: existingUid, reused: true };
+  }
+
   try {
     const created = await cs.createEntry(contentTypeUid, payload, locale);
-    return created.uid;
+    return { uid: created.uid, reused: false };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!isTitleNotUniqueError(msg)) throw e;
@@ -205,10 +214,9 @@ async function createLinkEntryWithDuplicateFallback(
     if (matches.length === 0) throw e;
     const existingUid = matches[0]!;
     console.error(
-      `[link] ${purpose} WARNING: title "${payload.title}" is not unique; updating existing entry ${existingUid}`
+      `[link] ${purpose} reusing existing entry ${existingUid} after duplicate title (no update)`
     );
-    const updated = await cs.updateEntry(contentTypeUid, existingUid, payload, locale);
-    return updated.uid ?? existingUid;
+    return { uid: existingUid, reused: true };
   }
 }
 
@@ -272,7 +280,7 @@ export async function ensureContentstackLinkEntry(opts: {
   }
 
   try {
-    const entryUid = await createLinkEntryWithDuplicateFallback(
+    const { uid: entryUid, reused } = await createLinkEntryWithDuplicateFallback(
       opts.cs,
       opts.fields.contentTypeUid,
       payload,
@@ -291,7 +299,7 @@ export async function ensureContentstackLinkEntry(opts: {
     await opts.map.save().catch(() => undefined);
 
     console.error(
-      `[link] created ${internalTarget ? "InternalLink" : "ExternalLink"} uid=${entryUid} ` +
+      `[link] ${reused ? "reused" : "created"} ${internalTarget ? "InternalLink" : "ExternalLink"} uid=${entryUid} ` +
         `(${opts.purpose}) text="${linkedText.slice(0, 60)}" href=${absoluteHref.slice(0, 120)}`
     );
 

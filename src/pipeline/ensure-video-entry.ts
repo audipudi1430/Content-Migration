@@ -8,7 +8,7 @@ import type { TrackingRow } from "./types.js";
 import { buildVideoEntryPayload, parseVideoEmbed } from "./video-embed.js";
 import { loadVideoContentTypeUid, loadVideoFieldUids } from "./video-entry-config.js";
 
-export type EnsureVideoEntrySource = "map" | "media_sheet" | "tracking" | "created";
+export type EnsureVideoEntrySource = "map" | "media_sheet" | "tracking" | "created" | "existing";
 
 export type EnsureVideoEntryResult = {
   entryUid: string;
@@ -21,10 +21,19 @@ async function createVideoEntryWithDuplicateFallback(
   payload: Record<string, unknown> & { title: string },
   locale: string | undefined,
   purpose: string
-): Promise<string> {
+): Promise<{ uid: string; reused: boolean }> {
+  const existing = await cs.findEntryUidsByExactTitle(contentTypeUid, payload.title, locale);
+  if (existing.length > 0) {
+    const existingUid = existing[0]!;
+    console.error(
+      `[video] ${purpose} reusing existing entry ${existingUid} (title="${payload.title}")`
+    );
+    return { uid: existingUid, reused: true };
+  }
+
   try {
     const created = await cs.createEntry(contentTypeUid, payload, locale);
-    return created.uid;
+    return { uid: created.uid, reused: false };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!isTitleNotUniqueError(msg)) throw e;
@@ -32,11 +41,9 @@ async function createVideoEntryWithDuplicateFallback(
     if (matches.length === 0) throw e;
     const existingUid = matches[0]!;
     console.error(
-      `[video] ${purpose} WARNING: title "${payload.title}" is not unique; ` +
-        `updating existing entry ${existingUid}`
+      `[video] ${purpose} reusing existing entry ${existingUid} after duplicate title (no update)`
     );
-    const updated = await cs.updateEntry(contentTypeUid, existingUid, payload, locale);
-    return updated.uid ?? existingUid;
+    return { uid: existingUid, reused: true };
   }
 }
 
@@ -98,7 +105,7 @@ export async function ensureVideoEntryForBody(opts: {
   };
 
   try {
-    const entryUid = await createVideoEntryWithDuplicateFallback(
+    const { uid: entryUid, reused } = await createVideoEntryWithDuplicateFallback(
       cs,
       contentTypeUid,
       payload,
@@ -115,10 +122,10 @@ export async function ensureVideoEntryForBody(opts: {
     });
     await map.save();
     console.error(
-      `[video] ${purpose} CREATED entry ${entryUid} type=${parsed.kind} ` +
+      `[video] ${purpose} ${reused ? "REUSED" : "CREATED"} entry ${entryUid} type=${parsed.kind} ` +
         `title=${parsed.entryTitle} url=${parsed.embedUrl}`
     );
-    return { entryUid, source: "created" };
+    return { entryUid, source: reused ? "existing" : "created" };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     opts.warnings?.add(`video entry: ${msg.slice(0, 300)}`);
