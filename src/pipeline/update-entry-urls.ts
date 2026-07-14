@@ -172,8 +172,8 @@ function sanitizeSeoFileRefsForWrite(
 }
 
 /**
- * Patch only top-level `url` and `seo.page_url.canonical`.
- * All other entry fields and SEO fields (including url_list) stay as-is.
+ * Patch top-level `url`, `seo.page_url.canonical`, and matching `seo.page_url.url_list[].url`.
+ * Other entry / SEO fields stay as-is.
  */
 export function buildEntryUrlUpdatePayload(opts: {
   existing: Record<string, unknown>;
@@ -201,6 +201,9 @@ export function buildEntryUrlUpdatePayload(opts: {
     opts.canonicalField
   );
 
+  const listField = opts.seoFields.seoPageUrlListField;
+  const listItemUrl = opts.seoFields.seoPageUrlListItemUrl;
+
   const existingPageUrl = existingSeo[opts.pageUrlField];
   if (
     existingPageUrl &&
@@ -208,23 +211,54 @@ export function buildEntryUrlUpdatePayload(opts: {
     !Array.isArray(existingPageUrl)
   ) {
     const pageUrlObj = { ...(existingPageUrl as Record<string, unknown>) };
-    // Only touch canonical — leave url_list and other nested fields unchanged.
     pageUrlObj[opts.canonicalField] = opts.updatedPath;
+
+    const list = pageUrlObj[listField];
+    if (Array.isArray(list) && list.length > 0) {
+      let matched = false;
+      pageUrlObj[listField] = list.map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+        const row = { ...(item as Record<string, unknown>) };
+        const current = String(row[listItemUrl] ?? "").trim();
+        if (
+          !current ||
+          current === previousCanonical ||
+          current === previousUrl ||
+          list.length === 1
+        ) {
+          row[listItemUrl] = opts.updatedPath;
+          matched = true;
+        }
+        return row;
+      });
+      // Multiple redirect rows may keep older paths; still ensure the primary path is present.
+      if (!matched && list.length > 1) {
+        const nextList = pageUrlObj[listField];
+        if (Array.isArray(nextList) && nextList[0] && typeof nextList[0] === "object" && !Array.isArray(nextList[0])) {
+          (nextList[0] as Record<string, unknown>)[listItemUrl] = opts.updatedPath;
+        }
+      }
+    } else {
+      // No url_list yet — add the primary path so canonical and list stay aligned.
+      pageUrlObj[listField] = [
+        {
+          [opts.seoFields.seoPageUrlListItemRedirect]: "",
+          [opts.seoFields.seoPageUrlListItemStatus]:
+            Number(opts.seoFields.seoPageUrlStatusDefault) ||
+            opts.seoFields.seoPageUrlStatusDefault ||
+            "200",
+          [listItemUrl]: opts.updatedPath,
+        },
+      ];
+    }
+
     existingSeo[opts.pageUrlField] = pageUrlObj;
   } else if (typeof existingPageUrl === "string") {
     // Rare string shape: treat page_url itself as the canonical path.
     existingSeo[opts.pageUrlField] = opts.updatedPath;
   } else {
-    // No page_url yet — create the stack shape, then still only rely on canonical.
-    const built = buildSeoPageUrlValue(opts.seoFields, opts.updatedPath);
-    if (built && typeof built === "object" && !Array.isArray(built)) {
-      existingSeo[opts.pageUrlField] = {
-        ...(built as Record<string, unknown>),
-        [opts.canonicalField]: opts.updatedPath,
-      };
-    } else {
-      existingSeo[opts.pageUrlField] = built;
-    }
+    // No page_url yet — build full shape (canonical + url_list).
+    existingSeo[opts.pageUrlField] = buildSeoPageUrlValue(opts.seoFields, opts.updatedPath);
   }
 
   // Required: CMA rejects full asset objects echoed from GET on file fields.
@@ -417,7 +451,7 @@ export async function runUpdateEntryUrls(argv: string[]): Promise<void> {
       row.seo_page_url_canonical = updatedPath;
       row.updated_url = updatedPath;
       row.update_status = "Pass";
-      row.update_message = `Updated ${urlField} and ${seoGroup}.${pageUrlField}.${canonicalField} only`;
+      row.update_message = `Updated ${urlField}, ${seoGroup}.${pageUrlField}.${canonicalField}, and ${seoGroup}.${pageUrlField}.url_list`;
       row.updated_at = now;
       updated += 1;
 
