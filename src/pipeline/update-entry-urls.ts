@@ -5,6 +5,7 @@ import { initPipelineEnv, numberArg, stringArg } from "./args.js";
 import { mapWithConcurrency } from "./async-pool.js";
 import { loadBlogFieldUids } from "./blog-config.js";
 import { normalizeMigrationUrlPath } from "./migration-url.js";
+import { contentstackFileRefValue } from "./blog-author-payload.js";
 import {
   buildSeoPageUrlValue,
   loadSharedSeoPageUrlFields,
@@ -132,6 +133,44 @@ function readCanonicalFromSeo(
   return "";
 }
 
+/** Pull asset UID from CMA GET shapes (string, `{ uid }`, or `[{ uid }]`). */
+function extractAssetUid(fileValue: unknown): string {
+  if (typeof fileValue === "string") return fileValue.trim();
+  if (Array.isArray(fileValue) && fileValue.length > 0) {
+    return extractAssetUid(fileValue[0]);
+  }
+  if (fileValue && typeof fileValue === "object") {
+    const uid = (fileValue as { uid?: unknown }).uid;
+    if (typeof uid === "string") return uid.trim();
+  }
+  return "";
+}
+
+/**
+ * GET returns full asset objects on file fields; PUT rejects those ("is not a valid upload").
+ * Rewrite `seo.meta_image.file` to the CMA write shape so we do not clear or replace the asset.
+ */
+function sanitizeSeoFileRefsForWrite(
+  seo: Record<string, unknown>,
+  fields: Pick<SeoSocialFieldUids, "metaImageGroup" | "metaImageFileField" | "fileRefShape">
+): void {
+  const metaImage = seo[fields.metaImageGroup];
+  if (!metaImage || typeof metaImage !== "object" || Array.isArray(metaImage)) return;
+
+  const group = { ...(metaImage as Record<string, unknown>) };
+  const fileField = fields.metaImageFileField || "file";
+  const uid = extractAssetUid(group[fileField]);
+  if (uid) {
+    group[fileField] = contentstackFileRefValue(uid, fields.fileRefShape);
+    seo[fields.metaImageGroup] = group;
+    return;
+  }
+
+  // No usable UID — omit file so CMA does not 422; keep the rest of meta_image.
+  delete group[fileField];
+  seo[fields.metaImageGroup] = group;
+}
+
 /**
  * Patch only top-level `url` and `seo.page_url.canonical`.
  * All other entry fields and SEO fields (including url_list) stay as-is.
@@ -187,6 +226,9 @@ export function buildEntryUrlUpdatePayload(opts: {
       existingSeo[opts.pageUrlField] = built;
     }
   }
+
+  // Required: CMA rejects full asset objects echoed from GET on file fields.
+  sanitizeSeoFileRefsForWrite(existingSeo, opts.seoFields);
 
   return {
     title,
