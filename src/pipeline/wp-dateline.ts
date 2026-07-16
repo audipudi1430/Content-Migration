@@ -20,6 +20,14 @@ function loadDatelineTargetTimeZone(): string {
   return process.env.BLOG_DATELINE_TIMEZONE?.trim() || "America/Los_Angeles";
 }
 
+/** Hours added to the computed dateline before write (default +7). */
+function loadDatelineOffsetHours(): number {
+  const raw = process.env.BLOG_DATELINE_OFFSET_HOURS?.trim();
+  if (raw === undefined || raw === "") return 7;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 7;
+}
+
 function parseWpDateTimeParts(value: string): DateTimeParts | undefined {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(value.trim());
   if (!m) return undefined;
@@ -83,43 +91,68 @@ function instantToWallTime(instant: Date, timeZone: string): string {
   return formatWallTime(readWallTimeInZone(instant, timeZone));
 }
 
+/** Add hours to a wall-clock datetime (rolls day/month/year as needed). */
+function addHoursToParts(parts: DateTimeParts, hours: number): DateTimeParts {
+  if (!hours) return parts;
+  const ms = Date.UTC(parts.y, parts.mo - 1, parts.d, parts.h, parts.mi, parts.se) + hours * 3_600_000;
+  const d = new Date(ms);
+  return {
+    y: d.getUTCFullYear(),
+    mo: d.getUTCMonth() + 1,
+    d: d.getUTCDate(),
+    h: d.getUTCHours(),
+    mi: d.getUTCMinutes(),
+    se: d.getUTCSeconds(),
+  };
+}
+
+function applyDatelineOffset(wallTime: string): string {
+  const parts = parseWpDateTimeParts(wallTime);
+  if (!parts) return wallTime;
+  return formatWallTime(addHoursToParts(parts, loadDatelineOffsetHours()));
+}
+
 function pickStringField(story: Record<string, unknown>, key: string): string {
   const v = story[key];
   return typeof v === "string" && v.trim() ? v.trim() : "";
 }
 
 /**
- * WordPress publish date → Contentstack dateline in Pacific Time.
+ * WordPress publish date → Contentstack dateline in Pacific Time, then +7 hours
+ * (override with `BLOG_DATELINE_OFFSET_HOURS`).
  *
- * Prefers `date` (e.g. `2024-09-19T09:00:00`) treated as Pacific wall time by default,
- * so the calendar day/time are preserved. Falls back to `date_gmt` (UTC → Pacific).
+ * Prefers `date` (e.g. `2024-09-19T09:00:00`) treated as Pacific wall time by default.
+ * Falls back to `date_gmt` (UTC → Pacific).
  */
 export function pickWpStoryDateline(story: Record<string, unknown>): string | undefined {
   const targetTz = loadDatelineTargetTimeZone();
   const sourceTz = loadDatelineSourceTimeZone();
+
+  let wall: string | undefined;
 
   // Prefer local `date` — treat bare timestamps as Pacific (or BLOG_DATELINE_SOURCE_TIMEZONE).
   const date = pickStringField(story, "date");
   if (date) {
     const parts = parseWpDateTimeParts(date);
     if (parts) {
-      // Same zone → keep wall clock as-is (no day shift).
-      if (sourceTz === targetTz) {
-        return formatWallTime(parts);
+      // Same zone → keep wall clock as-is (no day shift from TZ conversion).
+      wall =
+        sourceTz === targetTz
+          ? formatWallTime(parts)
+          : instantToWallTime(wallTimeToInstant(parts, sourceTz), targetTz);
+    }
+  }
+
+  if (!wall) {
+    const dateGmt = pickStringField(story, "date_gmt");
+    if (dateGmt) {
+      const parts = parseWpDateTimeParts(dateGmt);
+      if (parts) {
+        const instant = new Date(Date.UTC(parts.y, parts.mo - 1, parts.d, parts.h, parts.mi, parts.se));
+        wall = instantToWallTime(instant, targetTz);
       }
-      const instant = wallTimeToInstant(parts, sourceTz);
-      return instantToWallTime(instant, targetTz);
     }
   }
 
-  const dateGmt = pickStringField(story, "date_gmt");
-  if (dateGmt) {
-    const parts = parseWpDateTimeParts(dateGmt);
-    if (parts) {
-      const instant = new Date(Date.UTC(parts.y, parts.mo - 1, parts.d, parts.h, parts.mi, parts.se));
-      return instantToWallTime(instant, targetTz);
-    }
-  }
-
-  return undefined;
+  return wall ? applyDatelineOffset(wall) : undefined;
 }
