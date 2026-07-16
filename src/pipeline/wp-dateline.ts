@@ -7,10 +7,15 @@ type DateTimeParts = {
   se: number;
 };
 
+/**
+ * Timezone for WordPress `date` (no offset). Default Pacific — bare values like
+ * `2024-09-19T09:00:00` are treated as PST/PDT wall time (avoids day-off from CT→PT).
+ */
 function loadDatelineSourceTimeZone(): string {
-  return process.env.BLOG_DATELINE_SOURCE_TIMEZONE?.trim() || "America/Chicago";
+  return process.env.BLOG_DATELINE_SOURCE_TIMEZONE?.trim() || "America/Los_Angeles";
 }
 
+/** Target wall-clock zone stored on Contentstack `dateline` (default Pacific). */
 function loadDatelineTargetTimeZone(): string {
   return process.env.BLOG_DATELINE_TIMEZONE?.trim() || "America/Los_Angeles";
 }
@@ -55,8 +60,7 @@ function readWallTimeInZone(instant: Date, timeZone: string): DateTimeParts {
 }
 
 function wallTimeDiffSeconds(actual: DateTimeParts, target: DateTimeParts): number {
-  const toUtcMs = (p: DateTimeParts) =>
-    Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi, p.se);
+  const toUtcMs = (p: DateTimeParts) => Date.UTC(p.y, p.mo - 1, p.d, p.h, p.mi, p.se);
   return Math.round((toUtcMs(actual) - toUtcMs(target)) / 1000);
 }
 
@@ -86,26 +90,33 @@ function pickStringField(story: Record<string, unknown>, key: string): string {
 
 /**
  * WordPress publish date → Contentstack dateline in Pacific Time.
- * Prefers `date_gmt` (UTC); falls back to `date` interpreted in the WP site timezone (default CT).
+ *
+ * Prefers `date` (e.g. `2024-09-19T09:00:00`) treated as Pacific wall time by default,
+ * so the calendar day/time are preserved. Falls back to `date_gmt` (UTC → Pacific).
  */
 export function pickWpStoryDateline(story: Record<string, unknown>): string | undefined {
   const targetTz = loadDatelineTargetTimeZone();
   const sourceTz = loadDatelineSourceTimeZone();
+
+  // Prefer local `date` — treat bare timestamps as Pacific (or BLOG_DATELINE_SOURCE_TIMEZONE).
+  const date = pickStringField(story, "date");
+  if (date) {
+    const parts = parseWpDateTimeParts(date);
+    if (parts) {
+      // Same zone → keep wall clock as-is (no day shift).
+      if (sourceTz === targetTz) {
+        return formatWallTime(parts);
+      }
+      const instant = wallTimeToInstant(parts, sourceTz);
+      return instantToWallTime(instant, targetTz);
+    }
+  }
 
   const dateGmt = pickStringField(story, "date_gmt");
   if (dateGmt) {
     const parts = parseWpDateTimeParts(dateGmt);
     if (parts) {
       const instant = new Date(Date.UTC(parts.y, parts.mo - 1, parts.d, parts.h, parts.mi, parts.se));
-      return instantToWallTime(instant, targetTz);
-    }
-  }
-
-  const date = pickStringField(story, "date");
-  if (date) {
-    const parts = parseWpDateTimeParts(date);
-    if (parts) {
-      const instant = wallTimeToInstant(parts, sourceTz);
       return instantToWallTime(instant, targetTz);
     }
   }

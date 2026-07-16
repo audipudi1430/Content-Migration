@@ -20,6 +20,7 @@
     "pipeline:add-to-release": "tsx src/pipeline/cli.ts add-to-release",
     "pipeline:upload-folder-images": "tsx src/pipeline/cli.ts upload-folder-images",
     "pipeline:update-entry-urls": "tsx src/pipeline/cli.ts update-entry-urls",
+    "pipeline:update-story-datelines": "tsx src/pipeline/cli.ts update-story-datelines",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

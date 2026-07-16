@@ -10,6 +10,7 @@ import { runAddToReleaseFromTracking } from "./add-to-release.js";
 import { runPublishFromTracking } from "./publish.js";
 import { runUploadFolderImages } from "./upload-folder-images.js";
 import { runUpdateEntryUrls } from "./update-entry-urls.js";
+import { runUpdateStoryDatelines } from "./update-story-datelines.js";
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -31,6 +32,7 @@ async function main() {
   npm run pipeline:add-to-release -- --env=stack-a [--tab=stories] [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
   npm run pipeline:upload-folder-images -- --env=stack-a --folder=D:/photos/parent [--concurrency=4] [--no-skip-pass]
   npm run pipeline:update-entry-urls -- --env=stack-a [--workbook=entry-url-updates.xlsx] [--mode=all|single|ids] [--uid=blt...] [--uids=uid1,uid2] [--content-type=blog] [--locale=en-us] [--concurrency=4] [--no-skip-pass]
+  npm run pipeline:update-story-datelines -- --env=stack-a [--mode=all|single|ids] [--single-id=123] [--ids=1,2] [--limit=50] [--concurrency=4]
 
 Env (see env/.env.migration-pipeline.example):
   MIGRATION_SOURCE_WORKBOOK, MIGRATION_TRACKING_WORKBOOK, MIGRATION_TRACKING_SHEET,
@@ -61,6 +63,7 @@ Env (see env/.env.migration-pipeline.example):
   else if (cmd === "add-to-release") await runAddToReleaseFromTracking(rest);
   else if (cmd === "upload-folder-images") await runUploadFolderImages(rest);
   else if (cmd === "update-entry-urls") await runUpdateEntryUrls(rest);
+  else if (cmd === "update-story-datelines") await runUpdateStoryDatelines(rest);
   else throw new Error(`Unknown pipeline command: ${cmd}`);
 }
 
