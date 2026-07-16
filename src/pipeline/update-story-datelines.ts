@@ -1,12 +1,16 @@
 import { loadConfig } from "../config.js";
-import { loadMongoConfig, loadPipelinePaths } from "../config-pipeline.js";
+import {
+  loadMongoConfig,
+  loadPipelinePaths,
+  wpRestPathForSourceTab,
+} from "../config-pipeline.js";
 import { ContentstackManagementClient } from "../contentstack/client.js";
 import { closeMongo } from "../mongo/tracking-repository.js";
 import { basicAuthHeader, WordPressClient } from "../wordpress/client.js";
 import { initPipelineEnv, parseSelection, stringArg, type SelectionMode } from "./args.js";
 import { mapWithConcurrency } from "./async-pool.js";
 import { loadBlogContentTypeUid, loadBlogFieldUids } from "./blog-config.js";
-import { fetchWpStoryForMigration, loadBlogFetchBySlug } from "./blog-story-fetch.js";
+import { fetchWpStoryForMigration } from "./blog-story-fetch.js";
 import { selectContentRows } from "./migrate-from-tracking.js";
 import { loadAllTracking, persistOneRow } from "./tracking-sync.js";
 import { pickWpStoryDateline } from "./wp-dateline.js";
@@ -39,7 +43,7 @@ export async function runUpdateStoryDatelines(argv: string[]): Promise<void> {
 
   const fields = loadBlogFieldUids();
   const datelineField = fields.dateline || "dateline";
-  const fetchBySlug = loadBlogFetchBySlug();
+  // Dateline only needs date/date_gmt — fetch by wp_id (more reliable than slug).
   const concurrency = loadConcurrency(argv);
   const locale =
     stringArg(argv, "--locale")?.trim() ||
@@ -100,13 +104,21 @@ export async function runUpdateStoryDatelines(argv: string[]): Promise<void> {
       ) ?? tRow;
 
     try {
-      const { story } = await fetchWpStoryForMigration(
+      // Same as migrate-blog-stories: prefer tracking row path (stories), not default posts.
+      const restBase = (
+        trackRef.wp_rest_path?.trim() ||
+        wpRestPathForSourceTab(paths, trackRef.source_sheet, "content") ||
+        paths.wpRestPath
+      ).replace(/\/$/, "");
+
+      const { story, fetchUrl } = await fetchWpStoryForMigration(
         wp,
-        paths.wpRestPath,
+        restBase,
         trackRef,
         tRow.wp_id,
-        fetchBySlug
+        false
       );
+      console.error(`[update-story-datelines] wp_id=${tRow.wp_id} fetched ${fetchUrl}`);
       const newDateline = pickWpStoryDateline(story);
       if (!newDateline) {
         skipped += 1;

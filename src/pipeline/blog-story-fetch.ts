@@ -55,7 +55,8 @@ export async function fetchWpStoryBySlug(
 }
 
 /**
- * Load story for migration: slug query first (full `content.blocks`), ID fallback optional.
+ * Load story for migration: slug query first (full `content.blocks`), then ID fallback.
+ * Set `fetchBySlug=false` to go straight to `GET {restBase}/{wpId}` (enough for date fields).
  */
 export async function fetchWpStoryForMigration(
   wp: WordPressClient,
@@ -68,13 +69,29 @@ export async function fetchWpStoryForMigration(
 
   if (fetchBySlug) {
     const slug = storySlugForFetch(trackRef);
-    if (!slug) {
+    if (slug) {
+      try {
+        const story = await fetchWpStoryBySlug(wp, base, slug, wpId);
+        return { story, fetchUrl: `${base}?slug=${encodeURIComponent(slug)}` };
+      } catch (e) {
+        if (wpId > 0) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.error(
+            `[blog] slug fetch failed for wp_id=${wpId} (${msg.slice(0, 160)}); falling back to ${base}/${wpId}`
+          );
+        } else {
+          throw e;
+        }
+      }
+    } else if (!(wpId > 0)) {
       throw new Error(
         `No wp_slug for wp_id=${wpId}; re-run pipeline:extract or ensure URL/slug is on the tracking row`
       );
     }
-    const story = await fetchWpStoryBySlug(wp, base, slug, wpId);
-    return { story, fetchUrl: `${base}?slug=${encodeURIComponent(slug)}` };
+  }
+
+  if (!(wpId > 0)) {
+    throw new Error(`Cannot fetch story: missing wp_id and slug (rest=${base})`);
   }
 
   const rel = `${base}/${wpId}`;
