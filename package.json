@@ -16,11 +16,13 @@
     "pipeline:migrate-blog-authors": "tsx src/pipeline/cli.ts migrate-blog-authors",
     "pipeline:migrate-blog-categories": "tsx src/pipeline/cli.ts migrate-blog-categories",
     "pipeline:migrate-blog-stories": "tsx src/pipeline/cli.ts migrate-blog-stories",
+    "pipeline:migrate-press-releases": "tsx src/pipeline/cli.ts migrate-press-releases",
     "pipeline:publish": "tsx src/pipeline/cli.ts publish",
     "pipeline:add-to-release": "tsx src/pipeline/cli.ts add-to-release",
     "pipeline:upload-folder-images": "tsx src/pipeline/cli.ts upload-folder-images",
     "pipeline:update-entry-urls": "tsx src/pipeline/cli.ts update-entry-urls",
     "pipeline:update-story-datelines": "tsx src/pipeline/cli.ts update-story-datelines",
+    "pipeline:update-bconnected-stories": "tsx src/pipeline/cli.ts update-bconnected-stories",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

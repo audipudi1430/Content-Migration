@@ -285,6 +285,52 @@ export class ContentstackManagementClient {
   }
 
   /**
+   * Find entry UIDs with an exact top-level `url` match (tries each candidate path).
+   * Used when sheet lookup is by Contentstack entry URL rather than UID.
+   */
+  async findEntryUidsByExactUrl(
+    contentTypeUid: string,
+    urlCandidates: string[],
+    locale?: string,
+    urlFieldUid = "url"
+  ): Promise<string[]> {
+    const candidates = [
+      ...new Set(urlCandidates.map((u) => u.trim()).filter(Boolean)),
+    ];
+    if (candidates.length === 0) return [];
+
+    const found: string[] = [];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const params = new URLSearchParams({
+        query: JSON.stringify({ [urlFieldUid]: candidate }),
+        limit: "10",
+      });
+      if (locale) params.set("locale", locale);
+      const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries?${params}`;
+      const res = await fetch(url, { headers: this.headers() });
+      const text = await res.text();
+      if (!res.ok) {
+        throw new Error(`Contentstack ${res.status} GET entries by url: ${text.slice(0, 800)}`);
+      }
+      const json = JSON.parse(text) as {
+        entries?: { uid?: string; [k: string]: unknown }[];
+      };
+      for (const e of json.entries ?? []) {
+        const entryUrl = String(e[urlFieldUid] ?? "").trim();
+        if (entryUrl !== candidate) continue;
+        const uid = e.uid?.trim();
+        if (uid && !seen.has(uid)) {
+          seen.add(uid);
+          found.push(uid);
+        }
+      }
+      if (found.length > 0) break;
+    }
+    return found;
+  }
+
+  /**
    * Publish a single entry. Uses CMA publish endpoint; environments/locales come from opts.
    * @see https://www.contentstack.com/docs/developers/apis/content-management-api/
    */

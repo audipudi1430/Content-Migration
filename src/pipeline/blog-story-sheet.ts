@@ -77,6 +77,23 @@ export type StorySheetColumns = {
   l3ColumnPresent: boolean;
 };
 
+/** Parse L1/L2/L3/Series (and related) columns from a raw Excel/JSON row object. */
+export function parseStorySheetColumnsFromRow(o: Record<string, unknown>): StorySheetColumns {
+  return {
+    headline: normalizeWpText(pickFromRowObject(o, HEADLINE_KEYS)),
+    namedAuthor: normalizeWpText(pickFromRowObject(o, NAMED_AUTHOR_KEYS)),
+    namedAuthorColumnPresent: columnExistsInRow(o, NAMED_AUTHOR_KEYS),
+    l1: pickFromRowObject(o, L1_KEYS),
+    l1ColumnPresent: columnExistsInRow(o, L1_KEYS),
+    l2: pickFromRowObject(o, L2_KEYS),
+    l2ColumnPresent: columnExistsInRow(o, L2_KEYS),
+    series: pickFromRowObject(o, SERIES_KEYS),
+    seriesColumnPresent: columnExistsInRow(o, SERIES_KEYS),
+    l3: pickFromRowObject(o, L3_KEYS),
+    l3ColumnPresent: columnExistsInRow(o, L3_KEYS),
+  };
+}
+
 export function parseStorySheetColumns(
   row: Pick<TrackingRow, "source_columns_json">
 ): StorySheetColumns {
@@ -99,19 +116,7 @@ export function parseStorySheetColumns(
 
   try {
     const o = JSON.parse(raw) as Record<string, unknown>;
-    return {
-      headline: normalizeWpText(pickFromRowObject(o, HEADLINE_KEYS)),
-      namedAuthor: normalizeWpText(pickFromRowObject(o, NAMED_AUTHOR_KEYS)),
-      namedAuthorColumnPresent: columnExistsInRow(o, NAMED_AUTHOR_KEYS),
-      l1: pickFromRowObject(o, L1_KEYS),
-      l1ColumnPresent: columnExistsInRow(o, L1_KEYS),
-      l2: pickFromRowObject(o, L2_KEYS),
-      l2ColumnPresent: columnExistsInRow(o, L2_KEYS),
-      series: pickFromRowObject(o, SERIES_KEYS),
-      seriesColumnPresent: columnExistsInRow(o, SERIES_KEYS),
-      l3: pickFromRowObject(o, L3_KEYS),
-      l3ColumnPresent: columnExistsInRow(o, L3_KEYS),
-    };
+    return parseStorySheetColumnsFromRow(o);
   } catch {
     return empty;
   }
