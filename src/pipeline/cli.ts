@@ -36,6 +36,8 @@ async function main() {
   npm run pipeline:upload-folder-images -- --env=stack-a --folder=D:/photos/parent [--concurrency=4] [--no-skip-pass]
   npm run pipeline:update-entry-urls -- --env=stack-a [--workbook=entry-url-updates.xlsx] [--mode=all|single|ids] [--uid=blt...] [--uids=uid1,uid2] [--content-type=blog] [--locale=en-us] [--concurrency=4] [--no-skip-pass]
   npm run pipeline:update-story-datelines -- --env=stack-a [--mode=all|single|ids] [--single-id=123] [--ids=1,2] [--limit=50] [--concurrency=4]
+  npm run pipeline:update-story-datelines -- --env=stack-a --workbook=datelines.xlsx [--tab=Sheet1] [--content-type=blog] [--no-skip-pass]
+  # workbook writes *-tracking.xlsx (url, new_url, contentstack_entry_uid, Pass/Fail); mode=all = all rows (not 25)
   npm run pipeline:update-bconnected-stories -- --env=stack-a [--workbook=b-connected.xlsx] [--tab=final] [--limit=50] [--concurrency=4] [--no-skip-pass]
 
 Env (see env/.env.migration-pipeline.example):
