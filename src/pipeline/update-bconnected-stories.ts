@@ -40,8 +40,9 @@ import {
 } from "./seo-social-payload.js";
 
 const DEFAULT_LIMIT = 20;
-const DEFAULT_CONCURRENCY = 20;
-const MAX_CONCURRENCY = 32;
+/** Keep modest: each row does multiple CMA calls; high concurrency → Contentstack 429. */
+const DEFAULT_CONCURRENCY = 4;
+const MAX_CONCURRENCY = 16;
 
 function loadConcurrency(argv: string[]): number {
   const raw =

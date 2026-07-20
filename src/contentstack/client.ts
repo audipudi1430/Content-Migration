@@ -27,6 +27,37 @@ export class ContentstackManagementClient {
     return { ...this.authHeaders(), "Content-Type": "application/json" };
   }
 
+  /** CMA is rate-limited (~10 req/s). Retry 429 with Retry-After / exponential backoff. */
+  private async fetchWithRetry(
+    url: string,
+    init: RequestInit | undefined,
+    label: string
+  ): Promise<{ res: Response; text: string }> {
+    const maxAttempts = Math.max(
+      1,
+      Number(process.env.CONTENTSTACK_429_RETRIES ?? "8") || 8
+    );
+    let lastText = "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetch(url, init);
+      const text = await res.text();
+      lastText = text;
+      if (res.status !== 429) return { res, text };
+
+      const retryAfterHdr = res.headers.get("retry-after");
+      const retryAfterSec = retryAfterHdr ? Number(retryAfterHdr) : NaN;
+      const waitMs =
+        Number.isFinite(retryAfterSec) && retryAfterSec > 0
+          ? Math.min(60_000, Math.ceil(retryAfterSec * 1000))
+          : Math.min(30_000, 750 * 2 ** (attempt - 1));
+      console.error(
+        `[contentstack] 429 ${label}; retry ${attempt}/${maxAttempts} in ${waitMs}ms`
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    throw new Error(`Contentstack 429 ${label}: ${lastText.slice(0, 800)}`);
+  }
+
   async createEntry<T extends Record<string, unknown>>(
     contentTypeUid: string,
     entry: { title: string; [key: string]: unknown },
@@ -234,8 +265,11 @@ export class ContentstackManagementClient {
     const q = locale ? `?locale=${encodeURIComponent(locale)}` : "";
     const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries/${encodeURIComponent(entryUid)}${q}`;
     const body = JSON.stringify({ entry });
-    const res = await fetch(url, { method: "PUT", headers: this.headers(), body });
-    const text = await res.text();
+    const { res, text } = await this.fetchWithRetry(
+      url,
+      { method: "PUT", headers: this.headers(), body },
+      "PUT entry"
+    );
     if (!res.ok) throw new Error(`Contentstack ${res.status} PUT entry: ${text.slice(0, 800)}`);
     const json = JSON.parse(text) as { entry: { uid: string } };
     return json.entry as { uid: string };
@@ -248,8 +282,7 @@ export class ContentstackManagementClient {
   ): Promise<{ uid: string; version?: number; [k: string]: unknown }> {
     const q = locale ? `?locale=${encodeURIComponent(locale)}` : "";
     const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries/${encodeURIComponent(entryUid)}${q}`;
-    const res = await fetch(url, { headers: this.headers() });
-    const text = await res.text();
+    const { res, text } = await this.fetchWithRetry(url, { headers: this.headers() }, "GET entry");
     if (!res.ok) throw new Error(`Contentstack ${res.status} GET entry: ${text.slice(0, 800)}`);
     const json = JSON.parse(text) as { entry: { uid: string; version?: number; [k: string]: unknown } };
     return json.entry;
@@ -269,8 +302,11 @@ export class ContentstackManagementClient {
     });
     if (locale) params.set("locale", locale);
     const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries?${params}`;
-    const res = await fetch(url, { headers: this.headers() });
-    const text = await res.text();
+    const { res, text } = await this.fetchWithRetry(
+      url,
+      { headers: this.headers() },
+      "GET entries by title"
+    );
     if (!res.ok) {
       throw new Error(`Contentstack ${res.status} GET entries by title: ${text.slice(0, 800)}`);
     }
@@ -285,8 +321,8 @@ export class ContentstackManagementClient {
   }
 
   /**
-   * Find entry UIDs with an exact top-level `url` match (tries each candidate path).
-   * Used when sheet lookup is by Contentstack entry URL rather than UID.
+   * Find entry UIDs with an exact top-level `url` match.
+   * Uses one `$in` query for all path candidates (fewer CMA calls under concurrency).
    */
   async findEntryUidsByExactUrl(
     contentTypeUid: string,
@@ -298,34 +334,35 @@ export class ContentstackManagementClient {
       ...new Set(urlCandidates.map((u) => u.trim()).filter(Boolean)),
     ];
     if (candidates.length === 0) return [];
+    const candidateSet = new Set(candidates);
 
+    const params = new URLSearchParams({
+      query: JSON.stringify({ [urlFieldUid]: { $in: candidates } }),
+      limit: String(Math.min(100, Math.max(10, candidates.length * 2))),
+    });
+    if (locale) params.set("locale", locale);
+    const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries?${params}`;
+    const { res, text } = await this.fetchWithRetry(
+      url,
+      { headers: this.headers() },
+      "GET entries by url"
+    );
+    if (!res.ok) {
+      throw new Error(`Contentstack ${res.status} GET entries by url: ${text.slice(0, 800)}`);
+    }
+    const json = JSON.parse(text) as {
+      entries?: { uid?: string; [k: string]: unknown }[];
+    };
     const found: string[] = [];
     const seen = new Set<string>();
-    for (const candidate of candidates) {
-      const params = new URLSearchParams({
-        query: JSON.stringify({ [urlFieldUid]: candidate }),
-        limit: "10",
-      });
-      if (locale) params.set("locale", locale);
-      const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries?${params}`;
-      const res = await fetch(url, { headers: this.headers() });
-      const text = await res.text();
-      if (!res.ok) {
-        throw new Error(`Contentstack ${res.status} GET entries by url: ${text.slice(0, 800)}`);
+    for (const e of json.entries ?? []) {
+      const entryUrl = String(e[urlFieldUid] ?? "").trim();
+      if (!candidateSet.has(entryUrl)) continue;
+      const uid = e.uid?.trim();
+      if (uid && !seen.has(uid)) {
+        seen.add(uid);
+        found.push(uid);
       }
-      const json = JSON.parse(text) as {
-        entries?: { uid?: string; [k: string]: unknown }[];
-      };
-      for (const e of json.entries ?? []) {
-        const entryUrl = String(e[urlFieldUid] ?? "").trim();
-        if (entryUrl !== candidate) continue;
-        const uid = e.uid?.trim();
-        if (uid && !seen.has(uid)) {
-          seen.add(uid);
-          found.push(uid);
-        }
-      }
-      if (found.length > 0) break;
     }
     return found;
   }
