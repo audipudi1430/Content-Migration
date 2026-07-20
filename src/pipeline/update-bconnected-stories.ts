@@ -34,6 +34,8 @@ import {
 } from "./update-bconnected-stories-sheet.js";
 import { buildEntryUrlUpdatePayload } from "./update-entry-urls.js";
 import {
+  loadMigrationPageOwnerValue,
+  loadSharedSeoInnerFieldUids,
   loadSharedSeoPageUrlFields,
   resolveSeoPageUrlShape,
   type SeoSocialFieldUids,
@@ -154,15 +156,20 @@ function mergeUnique(existing: string[], next: string[]): string[] {
 
 function loadSeoFieldsForUrlPatch(): SeoSocialFieldUids {
   const blog = loadBlogFieldUids();
-  const shared = loadSharedSeoPageUrlFields();
   return {
     ...blog,
     seoPageUrlShape: resolveSeoPageUrlShape(
       process.env.UPDATE_ENTRY_URL_SEO_PAGE_URL_SHAPE ?? process.env.BLOG_SEO_PAGE_URL_SHAPE,
       "canonical_url_list"
     ),
-    ...shared,
+    ...loadSharedSeoPageUrlFields(),
+    ...loadSharedSeoInnerFieldUids(),
   };
+}
+
+/** Default page owner when `seo.page_owner` is empty (env PAGE_OWNER, else Broadcom). */
+function resolvePageOwnerDefault(): string {
+  return loadMigrationPageOwnerValue() || "Broadcom";
 }
 
 function pathSet(...raws: string[]): Set<string> {
@@ -434,6 +441,17 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         }
       }
 
+      const pageOwnerField = seoFields.seoPageOwner || "page_owner";
+      const existingPageOwner = String(seo[pageOwnerField] ?? "").trim();
+      let pageOwnerSet = false;
+      if (!existingPageOwner) {
+        seo[pageOwnerField] = resolvePageOwnerDefault();
+        pageOwnerSet = true;
+        console.error(
+          `[b-connected] uid=${entryUid} seo.${pageOwnerField} ← ${seo[pageOwnerField]}`
+        );
+      }
+
       const payload: Record<string, unknown> & { title: string } = {
         title: urlPatch.title,
         [fields.url]: urlPatch.url,
@@ -506,6 +524,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         bannerUid ? `article_image←${bannerUid}` : "article_image skipped",
         storySheetHasCategoryColumns(row.sheetCols) ? "categories appended" : "",
         row.sheetCols.l3ColumnPresent ? "topics appended" : "",
+        pageOwnerSet ? `page_owner←${seo[pageOwnerField]}` : "",
       ]
         .filter(Boolean)
         .join("; ");
