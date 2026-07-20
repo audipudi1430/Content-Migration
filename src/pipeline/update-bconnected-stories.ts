@@ -140,11 +140,13 @@ function loadSeoFieldsForUrlPatch(): SeoSocialFieldUids {
 }
 
 /**
- * Update already-migrated blog entries from `b-connected.xlsx` tab `final`:
- * - find by sheet `url`
- * - set `url` + seo.page_url.canonical + url_list from `new_url`
- * - copy banner_image asset → article_image
- * - append L1/L2/Series → blog_category refs; L3 → blog_topics
+ * Update already-migrated blog entries from an input workbook:
+ * - find Contentstack entry by sheet `url`
+ * - update url in three places from `new_url` (top-level url, seo canonical, url_list)
+ * - append L1/L2/Series → blog_category (keep existing refs)
+ * - append L3 → blog_topics (keep existing topics)
+ * - optionally copy banner_image → article_image when present
+ * - write `*-tracking.xlsx` with url, new_url, contentstack_entry_uid, Pass/Fail
  */
 export async function runUpdateBConnectedStories(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
@@ -155,6 +157,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
   const tabName = resolveBConnectedTabName(stringArg(argv, "--tab"));
   const skipPass = !argv.includes("--no-skip-pass");
   const concurrency = loadConcurrency(argv);
+  const offset = Math.max(0, numberArg(argv, "--offset") ?? 0);
   const limit = numberArg(argv, "--limit");
   const locale =
     stringArg(argv, "--locale")?.trim() ||
@@ -178,17 +181,22 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
     host: cfg.contentstack.apiHost,
   });
 
-  let rows = readBConnectedWorkbook(workbookPath, tabName);
-  if (limit != null && limit > 0) rows = rows.slice(0, limit);
+  const allRows = readBConnectedWorkbook(workbookPath, tabName);
+  const end =
+    limit != null && limit > 0 ? Math.min(allRows.length, offset + limit) : allRows.length;
+  const workIndexes: number[] = [];
+  for (let i = offset; i < end; i++) workIndexes.push(i);
 
   const allTracking = loadAllTracking(paths);
 
   console.error(
-    `[b-connected] workbook=${workbookPath} tab=${tabName} rows=${rows.length} ` +
-      `contentType=${contentTypeUid} locale=${locale} concurrency=${concurrency}`
+    `[b-connected] workbook=${workbookPath} tab=${tabName} ` +
+      `rows=${workIndexes.length}/${allRows.length} offset=${offset}` +
+      (limit != null && limit > 0 ? ` limit=${limit}` : " limit=all") +
+      ` contentType=${contentTypeUid} locale=${locale} concurrency=${concurrency}`
   );
 
-  if (rows.length === 0) {
+  if (workIndexes.length === 0) {
     console.error("[b-connected] No rows to process.");
     return;
   }
@@ -199,12 +207,14 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
   let writeChain: Promise<void> = Promise.resolve();
   const persist = (): Promise<void> => {
     writeChain = writeChain.then(() => {
-      writeBConnectedStatusWorkbook(workbookPath, rows);
+      // Full sheet so offset/limit batches accumulate in one tracking workbook.
+      writeBConnectedStatusWorkbook(workbookPath, allRows);
     });
     return writeChain;
   };
 
-  await mapWithConcurrency(rows, concurrency, async (row, index) => {
+  await mapWithConcurrency(workIndexes, concurrency, async (rowIndex) => {
+    const row = allRows[rowIndex]!;
     const now = new Date().toISOString();
 
     if (skipPass && row.update_status === "Pass") {
@@ -219,15 +229,15 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
       row.update_message = "Missing new_url";
       row.updated_at = now;
       failed += 1;
-      rows[index] = row;
+      allRows[rowIndex] = row;
       await persist();
       return;
     }
 
+    let entryUid = row.contentstack_entry_uid.trim();
     try {
-      let entryUid = row.contentstack_entry_uid.trim();
       if (!entryUid) {
-        const candidates = urlLookupCandidates(row.url || row.new_url);
+        const candidates = urlLookupCandidates(row.url);
         if (candidates.length === 0) {
           throw new Error("Missing url for Contentstack lookup");
         }
@@ -243,6 +253,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
           );
         }
         entryUid = matches[0]!;
+        row.contentstack_entry_uid = entryUid;
         if (matches.length > 1) {
           console.error(
             `[b-connected] WARNING: ${matches.length} entries matched url; using ${entryUid}`
@@ -306,40 +317,37 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         );
       }
 
-      // L1 / L2 / Series → append blog_category refs
+      // L1 / L2 / Series → append to blog_category (never replace existing)
+      const existingCatUids = existingCategoryUids(existing, fields.blogCategory);
       if (storySheetHasCategoryColumns(row.sheetCols)) {
         const labels = storySheetCategoryLabels(row.sheetCols);
-        const resolved = await resolveBlogCategoryUidsByNames({
-          names: labels,
-          cs,
-          categoryContentTypeUid: categoryCt,
-          allTracking,
-          locale,
-        });
-        const merged = mergeUnique(
-          existingCategoryUids(existing, fields.blogCategory),
-          resolved
-        );
-        if (merged.length > 0) {
-          setEntryReferences(payload, fields.blogCategory, merged, categoryCt);
-        }
+        const resolved = labels.length
+          ? await resolveBlogCategoryUidsByNames({
+              names: labels,
+              cs,
+              categoryContentTypeUid: categoryCt,
+              allTracking,
+              locale,
+            })
+          : [];
+        const merged = mergeUnique(existingCatUids, resolved);
+        // Always send merged list so Contentstack keeps prior refs + new ones.
+        setEntryReferences(payload, fields.blogCategory, merged, categoryCt);
         console.error(
-          `[b-connected] uid=${entryUid} blog_category labels=${labels.join(", ") || "(none)"} ` +
-            `uids=${merged.length}`
+          `[b-connected] uid=${entryUid} blog_category keep=${existingCatUids.length} ` +
+            `add=${resolved.length} total=${merged.length} labels=${labels.join(", ") || "(none)"}`
         );
       }
 
-      // L3 → append blog_topics
+      // L3 → append to blog_topics (never remove existing)
+      const existingTopics = existingTopicLabels(existing, fields.blogTopics);
       if (row.sheetCols.l3ColumnPresent) {
-        const topics = mergeUnique(
-          existingTopicLabels(existing, fields.blogTopics),
-          parseCommaSeparatedLabels(row.sheetCols.l3)
-        );
-        if (topics.length > 0) {
-          payload[fields.blogTopics] = topics;
-        }
+        const added = parseCommaSeparatedLabels(row.sheetCols.l3);
+        const topics = mergeUnique(existingTopics, added);
+        payload[fields.blogTopics] = topics;
         console.error(
-          `[b-connected] uid=${entryUid} blog_topics=${topics.length ? topics.join(", ") : "(empty)"}`
+          `[b-connected] uid=${entryUid} blog_topics keep=${existingTopics.length} ` +
+            `add=${added.length} total=${topics.length}`
         );
       }
 
@@ -351,7 +359,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
       row.new_url = newPath;
       row.update_status = "Pass";
       row.update_message = [
-        `url→${newPath}`,
+        `url→${newPath} (url + canonical + url_list)`,
         bannerUid ? `article_image←${bannerUid}` : "article_image skipped",
         storySheetHasCategoryColumns(row.sheetCols) ? "categories appended" : "",
         row.sheetCols.l3ColumnPresent ? "topics appended" : "",
@@ -366,6 +374,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message.slice(0, 500) : String(e);
+      if (entryUid) row.contentstack_entry_uid = entryUid;
       row.update_status = "Fail";
       row.update_message = msg;
       row.updated_at = now;
@@ -374,7 +383,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         `[b-connected] FAIL url=${row.url || "(none)"}: ${msg.slice(0, 220)}`
       );
     } finally {
-      rows[index] = row;
+      allRows[rowIndex] = row;
       await persist();
     }
   });
@@ -382,6 +391,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
   await persist();
   console.error(
     `[b-connected] Done. updated=${updated} skipped=${skipped} failed=${failed} ` +
-      `status=${bConnectedStatusWorkbookPath(workbookPath)}`
+      `tracking=${bConnectedStatusWorkbookPath(workbookPath)}`
   );
 }

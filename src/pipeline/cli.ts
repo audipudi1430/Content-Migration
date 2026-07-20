@@ -38,7 +38,8 @@ async function main() {
   npm run pipeline:update-story-datelines -- --env=stack-a [--mode=all|single|ids] [--single-id=123] [--ids=1,2] [--limit=50] [--concurrency=4]
   npm run pipeline:update-story-datelines -- --env=stack-a --workbook=datelines.xlsx [--tab=Sheet1] [--content-type=blog] [--no-skip-pass]
   # workbook writes *-tracking.xlsx (url, new_url, contentstack_entry_uid, Pass/Fail); mode=all = all rows (not 25)
-  npm run pipeline:update-bconnected-stories -- --env=stack-a [--workbook=b-connected.xlsx] [--tab=final] [--limit=50] [--concurrency=4] [--no-skip-pass]
+  npm run pipeline:update-bconnected-stories -- --env=stack-a --workbook=b-connected.xlsx [--tab=final] [--offset=0] [--limit=50] [--concurrency=4] [--no-skip-pass]
+  # finds by sheet url; appends L1/L2/series→blog_category + L3→blog_topics; updates url/canonical/url_list; writes *-tracking.xlsx
 
 Env (see env/.env.migration-pipeline.example):
   MIGRATION_SOURCE_WORKBOOK, MIGRATION_TRACKING_WORKBOOK, MIGRATION_TRACKING_SHEET,

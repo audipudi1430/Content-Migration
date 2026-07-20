@@ -26,7 +26,7 @@ export type BConnectedUpdateRow = {
 };
 
 const DEFAULT_SHEET = "final";
-const OUT_SHEET = "bconnected_updates";
+const TRACKING_SHEET = "tracking";
 
 function normHeader(h: string): string {
   return h
@@ -76,6 +76,7 @@ export function readBConnectedWorkbook(path: string, tabName: string): BConnecte
   const preferred =
     wb.Sheets[tabName] ??
     wb.Sheets[wb.SheetNames.find((n) => n.toLowerCase() === tabName.toLowerCase()) ?? ""] ??
+    wb.Sheets[wb.SheetNames.find((n) => n.toLowerCase() === TRACKING_SHEET) ?? ""] ??
     wb.Sheets[wb.SheetNames[0]!];
   if (!preferred) return [];
 
@@ -104,7 +105,7 @@ export function readBConnectedWorkbook(path: string, tabName: string): BConnecte
           "cs_uid",
         ]),
         previous_url: pickCell(r, ["previous_url"]),
-        update_status: (pickCell(r, ["update_status", "status"]) ||
+        update_status: (pickCell(r, ["update_status", "status", "pass_fail", "pass/fail"]) ||
           "Pending") as BConnectedUpdateStatus,
         update_message: pickCell(r, ["update_message", "message"]),
         updated_at: pickCell(r, ["updated_at"]),
@@ -113,44 +114,45 @@ export function readBConnectedWorkbook(path: string, tabName: string): BConnecte
     .filter((r) => r.url.length > 0 || r.new_url.length > 0 || r.contentstack_entry_uid.length > 0);
 }
 
+/** Tracking workbook: url, new_url, contentstack_entry_uid, Pass/Fail (+ details). */
 export function writeBConnectedStatusWorkbook(path: string, rows: BConnectedUpdateRow[]): void {
-  const statusPath = path.replace(/\.xlsx$/i, "") + "-status.xlsx";
+  const statusPath = bConnectedStatusWorkbookPath(path);
   const wb = XLSX.utils.book_new();
   const data = [
     [
       "url",
       "new_url",
-      "banner_image",
+      "contentstack_entry_uid",
+      "update_status",
+      "update_message",
+      "previous_url",
       "l1",
       "l2",
       "l3",
       "series",
-      "contentstack_entry_uid",
-      "previous_url",
-      "update_status",
-      "update_message",
+      "banner_image",
       "updated_at",
     ],
     ...rows.map((r) => [
       r.url,
       r.new_url,
-      r.banner_image,
+      r.contentstack_entry_uid,
+      r.update_status,
+      r.update_message,
+      r.previous_url,
       r.l1,
       r.l2,
       r.l3,
       r.series,
-      r.contentstack_entry_uid,
-      r.previous_url,
-      r.update_status,
-      r.update_message,
+      r.banner_image,
       r.updated_at,
     ]),
   ];
   const ws = XLSX.utils.aoa_to_sheet(data);
-  XLSX.utils.book_append_sheet(wb, ws, OUT_SHEET);
+  XLSX.utils.book_append_sheet(wb, ws, TRACKING_SHEET);
   writeFileSync(statusPath, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 }
 
 export function bConnectedStatusWorkbookPath(sourcePath: string): string {
-  return sourcePath.replace(/\.xlsx$/i, "") + "-status.xlsx";
+  return sourcePath.replace(/\.xlsx$/i, "") + "-tracking.xlsx";
 }
