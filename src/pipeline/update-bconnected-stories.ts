@@ -22,13 +22,15 @@ import {
 import { normalizeMigrationUrlPath } from "./migration-url.js";
 import { resolveBlogCategoryUidsByNames } from "./resolve-entry-ref-by-name.js";
 import { loadAllTracking } from "./tracking-sync.js";
+import type { TrackingRow } from "./types.js";
 import {
   bConnectedStatusWorkbookPath,
   defaultBConnectedWorkbookPath,
+  isBConnectedPending,
+  mergeBConnectedPriorTracking,
   readBConnectedWorkbook,
   resolveBConnectedTabName,
   writeBConnectedStatusWorkbook,
-  type BConnectedUpdateRow,
 } from "./update-bconnected-stories-sheet.js";
 import { buildEntryUrlUpdatePayload } from "./update-entry-urls.js";
 import {
@@ -37,10 +39,34 @@ import {
   type SeoSocialFieldUids,
 } from "./seo-social-payload.js";
 
+const DEFAULT_LIMIT = 20;
+const DEFAULT_CONCURRENCY = 20;
+const MAX_CONCURRENCY = 32;
+
 function loadConcurrency(argv: string[]): number {
-  const raw = stringArg(argv, "--concurrency") ?? process.env.BCONNECTED_CONCURRENCY ?? "4";
+  const raw =
+    stringArg(argv, "--concurrency") ?? process.env.BCONNECTED_CONCURRENCY ?? String(DEFAULT_CONCURRENCY);
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 16) : 4;
+  return Number.isFinite(n) && n > 0
+    ? Math.min(Math.floor(n), MAX_CONCURRENCY)
+    : DEFAULT_CONCURRENCY;
+}
+
+function loadLimit(argv: string[]): number {
+  if (argv.includes("--all")) return Number.MAX_SAFE_INTEGER;
+  const fromArg = numberArg(argv, "--limit");
+  if (fromArg != null) {
+    // --limit=0 means all pending
+    if (fromArg <= 0) return Number.MAX_SAFE_INTEGER;
+    return fromArg;
+  }
+  const fromEnv = process.env.BCONNECTED_LIMIT?.trim();
+  if (fromEnv) {
+    const n = Number(fromEnv);
+    if (Number.isFinite(n) && n <= 0) return Number.MAX_SAFE_INTEGER;
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return DEFAULT_LIMIT;
 }
 
 function urlLookupCandidates(raw: string): string[] {
@@ -49,7 +75,6 @@ function urlLookupCandidates(raw: string): string[] {
   const out = new Set<string>([path]);
   if (path !== "/" && path.endsWith("/")) out.add(path.replace(/\/+$/, ""));
   else if (path !== "/") out.add(`${path}/`);
-  // Also try original trimmed value if it differs (full URLs already normalized to path).
   const trimmed = raw.trim();
   if (trimmed && trimmed !== path) out.add(trimmed);
   return [...out];
@@ -139,14 +164,54 @@ function loadSeoFieldsForUrlPatch(): SeoSocialFieldUids {
   };
 }
 
+function pathSet(...raws: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const raw of raws) {
+    for (const c of urlLookupCandidates(raw)) out.add(c.toLowerCase());
+  }
+  return out;
+}
+
+/** Prefer migrate/extract tracking UID matched on sheet url (old path). */
+function uidFromMigrationTracking(
+  allTracking: TrackingRow[],
+  url: string,
+  newUrl: string
+): { uid: string; matchedOn: "url" | "new_url" } | undefined {
+  const urlPaths = pathSet(url);
+  const newPaths = pathSet(newUrl);
+  for (const t of allTracking) {
+    const uid = t.contentstack_entry_uid?.trim();
+    if (!uid) continue;
+    const trackPaths = pathSet(t.url, t.new_url, t.target_url);
+    let matchedUrl = false;
+    let matchedNew = false;
+    for (const p of trackPaths) {
+      if (urlPaths.has(p)) matchedUrl = true;
+      if (newPaths.has(p)) matchedNew = true;
+    }
+    if (matchedUrl) return { uid, matchedOn: "url" };
+    if (matchedNew) return { uid, matchedOn: "new_url" };
+  }
+  return undefined;
+}
+
+async function findEntryUidByUrlCandidates(
+  cs: ContentstackManagementClient,
+  contentTypeUid: string,
+  candidates: string[],
+  locale: string,
+  urlField: string
+): Promise<string[]> {
+  if (candidates.length === 0) return [];
+  return cs.findEntryUidsByExactUrl(contentTypeUid, candidates, locale, urlField);
+}
+
 /**
  * Update already-migrated blog entries from an input workbook:
- * - find Contentstack entry by sheet `url`
- * - update url in three places from `new_url` (top-level url, seo canonical, url_list)
- * - append L1/L2/Series → blog_category (keep existing refs)
- * - append L3 → blog_topics (keep existing topics)
- * - optionally copy banner_image → article_image when present
- * - write `*-tracking.xlsx` with url, new_url, contentstack_entry_uid, Pass/Fail
+ * - find by sheet `url`; if missing, find by `new_url` → status "Already Updated" (no write)
+ * - otherwise update url (3 places), append categories/topics
+ * - default batch 20 pending rows, concurrency 20; merge prior tracking each run
  */
 export async function runUpdateBConnectedStories(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
@@ -155,10 +220,10 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
     stringArg(argv, "--workbook") ?? stringArg(argv, "--sheet-file")
   );
   const tabName = resolveBConnectedTabName(stringArg(argv, "--tab"));
-  const skipPass = !argv.includes("--no-skip-pass");
+  const skipDone = !argv.includes("--no-skip-pass");
   const concurrency = loadConcurrency(argv);
   const offset = Math.max(0, numberArg(argv, "--offset") ?? 0);
-  const limit = numberArg(argv, "--limit");
+  const limit = loadLimit(argv);
   const locale =
     stringArg(argv, "--locale")?.trim() ||
     process.env.BCONNECTED_LOCALE?.trim() ||
@@ -182,32 +247,48 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
   });
 
   const allRows = readBConnectedWorkbook(workbookPath, tabName);
-  const end =
-    limit != null && limit > 0 ? Math.min(allRows.length, offset + limit) : allRows.length;
-  const workIndexes: number[] = [];
-  for (let i = offset; i < end; i++) workIndexes.push(i);
-
+  const mergedPrior = mergeBConnectedPriorTracking(workbookPath, allRows);
   const allTracking = loadAllTracking(paths);
+
+  // Seed UIDs from extract/migrate tracking (helps tracking sheet + retries).
+  let seededFromMigrate = 0;
+  for (const row of allRows) {
+    if (row.contentstack_entry_uid.trim()) continue;
+    const hit = uidFromMigrationTracking(allTracking, row.url, row.new_url);
+    if (!hit) continue;
+    row.contentstack_entry_uid = hit.uid;
+    seededFromMigrate += 1;
+  }
+
+  const pendingIndexes = allRows
+    .map((row, i) => ({ row, i }))
+    .filter(({ row }) => (skipDone ? isBConnectedPending(row) : true))
+    .map(({ i }) => i);
+
+  const end = Math.min(pendingIndexes.length, offset + limit);
+  const workIndexes = pendingIndexes.slice(offset, end);
 
   console.error(
     `[b-connected] workbook=${workbookPath} tab=${tabName} ` +
-      `rows=${workIndexes.length}/${allRows.length} offset=${offset}` +
-      (limit != null && limit > 0 ? ` limit=${limit}` : " limit=all") +
-      ` contentType=${contentTypeUid} locale=${locale} concurrency=${concurrency}`
+      `pending=${pendingIndexes.length}/${allRows.length} work=${workIndexes.length} ` +
+      `offset=${offset} limit=${limit === Number.MAX_SAFE_INTEGER ? "all" : limit} ` +
+      `concurrency=${concurrency} mergedTracking=${mergedPrior} migrateUids=${seededFromMigrate} ` +
+      `contentType=${contentTypeUid} locale=${locale}`
   );
 
   if (workIndexes.length === 0) {
-    console.error("[b-connected] No rows to process.");
+    console.error("[b-connected] No pending rows to process.");
+    writeBConnectedStatusWorkbook(workbookPath, allRows);
     return;
   }
 
   let updated = 0;
+  let alreadyUpdated = 0;
   let skipped = 0;
   let failed = 0;
   let writeChain: Promise<void> = Promise.resolve();
   const persist = (): Promise<void> => {
     writeChain = writeChain.then(() => {
-      // Full sheet so offset/limit batches accumulate in one tracking workbook.
       writeBConnectedStatusWorkbook(workbookPath, allRows);
     });
     return writeChain;
@@ -217,9 +298,8 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
     const row = allRows[rowIndex]!;
     const now = new Date().toISOString();
 
-    if (skipPass && row.update_status === "Pass") {
+    if (skipDone && !isBConnectedPending(row)) {
       skipped += 1;
-      console.error(`[b-connected] skip (already Pass): url=${row.url || row.new_url}`);
       return;
     }
 
@@ -234,34 +314,101 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
       return;
     }
 
-    let entryUid = row.contentstack_entry_uid.trim();
+    let entryUid = "";
     try {
-      if (!entryUid) {
-        const candidates = urlLookupCandidates(row.url);
-        if (candidates.length === 0) {
-          throw new Error("Missing url for Contentstack lookup");
+      const urlCandidates = urlLookupCandidates(row.url);
+      const newUrlCandidates = urlLookupCandidates(row.new_url);
+
+      const byUrl = await findEntryUidByUrlCandidates(
+        cs,
+        contentTypeUid,
+        urlCandidates,
+        locale,
+        fields.url
+      );
+
+      if (byUrl.length > 0) {
+        entryUid = byUrl[0]!;
+        if (byUrl.length > 1) {
+          console.error(
+            `[b-connected] WARNING: ${byUrl.length} entries matched url; using ${entryUid}`
+          );
         }
-        const matches = await cs.findEntryUidsByExactUrl(
+      } else {
+        const byNew = await findEntryUidByUrlCandidates(
+          cs,
           contentTypeUid,
-          candidates,
+          newUrlCandidates,
           locale,
           fields.url
         );
-        if (matches.length === 0) {
-          throw new Error(
-            `No Contentstack entry found for url candidates: ${candidates.join(", ")}`
-          );
-        }
-        entryUid = matches[0]!;
-        row.contentstack_entry_uid = entryUid;
-        if (matches.length > 1) {
+        if (byNew.length > 0) {
+          entryUid = byNew[0]!;
+          row.contentstack_entry_uid = entryUid;
+          row.update_status = "Already Updated";
+          row.update_message = `Entry already at new_url (found by new_url); no changes applied`;
+          row.updated_at = now;
+          alreadyUpdated += 1;
+          allRows[rowIndex] = row;
+          await persist();
           console.error(
-            `[b-connected] WARNING: ${matches.length} entries matched url; using ${entryUid}`
+            `[b-connected] Already Updated uid=${entryUid} new_url=${newPath}`
+          );
+          return;
+        }
+
+        // Fallback: extract/migrate tracking UID matched on old url only.
+        const migrateHit = uidFromMigrationTracking(allTracking, row.url, row.new_url);
+        if (migrateHit?.matchedOn === "url") {
+          entryUid = migrateHit.uid;
+          console.error(
+            `[b-connected] uid=${entryUid} from migrate tracking (url match); CS url lookup empty`
+          );
+        } else if (migrateHit?.matchedOn === "new_url") {
+          entryUid = migrateHit.uid;
+          row.contentstack_entry_uid = entryUid;
+          row.update_status = "Already Updated";
+          row.update_message =
+            "Entry already at new_url (migrate tracking matched new_url); no changes applied";
+          row.updated_at = now;
+          alreadyUpdated += 1;
+          allRows[rowIndex] = row;
+          await persist();
+          console.error(
+            `[b-connected] Already Updated uid=${entryUid} (migrate tracking new_url)`
+          );
+          return;
+        } else {
+          throw new Error(
+            `No Contentstack entry for url=${urlCandidates.join("|") || "(empty)"} ` +
+              `or new_url=${newUrlCandidates.join("|") || "(empty)"}`
           );
         }
       }
 
+      row.contentstack_entry_uid = entryUid;
+
       const existing = await cs.getEntry(contentTypeUid, entryUid, locale);
+      const currentPath = normalizeMigrationUrlPath(String(existing[fields.url] ?? ""));
+      const newPathSet = pathSet(row.new_url, newPath);
+      const oldPathSet = pathSet(row.url);
+      if (
+        currentPath &&
+        newPathSet.has(currentPath.toLowerCase()) &&
+        !oldPathSet.has(currentPath.toLowerCase())
+      ) {
+        row.update_status = "Already Updated";
+        row.update_message = `Entry url already ${currentPath}; no changes applied`;
+        row.updated_at = now;
+        alreadyUpdated += 1;
+        allRows[rowIndex] = row;
+        await persist();
+        console.error(
+          `[b-connected] Already Updated uid=${entryUid} current=${currentPath}`
+        );
+        return;
+      }
+
       const urlPatch = buildEntryUrlUpdatePayload({
         existing,
         updatedPath: newPath,
@@ -272,7 +419,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         seoFields,
       });
 
-      // Sanitize meta_image for write (same as update-entry-urls).
       const seo = urlPatch.seo;
       const metaImage = seo[fields.metaImageGroup];
       if (metaImage && typeof metaImage === "object" && !Array.isArray(metaImage)) {
@@ -293,7 +439,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         [fields.seoSocialGroup]: seo,
       };
 
-      // banner_image (sheet override or entry) → article_image
       const bannerUid =
         row.banner_image.trim() ||
         pickBannerAssetUid(existing, fields.bannerImage, fields.bannerImageFileField);
@@ -317,7 +462,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         );
       }
 
-      // L1 / L2 / Series → append to blog_category (never replace existing)
       const existingCatUids = existingCategoryUids(existing, fields.blogCategory);
       if (storySheetHasCategoryColumns(row.sheetCols)) {
         const labels = storySheetCategoryLabels(row.sheetCols);
@@ -331,7 +475,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
             })
           : [];
         const merged = mergeUnique(existingCatUids, resolved);
-        // Always send merged list so Contentstack keeps prior refs + new ones.
         setEntryReferences(payload, fields.blogCategory, merged, categoryCt);
         console.error(
           `[b-connected] uid=${entryUid} blog_category keep=${existingCatUids.length} ` +
@@ -339,7 +482,6 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
         );
       }
 
-      // L3 → append to blog_topics (never remove existing)
       const existingTopics = existingTopicLabels(existing, fields.blogTopics);
       if (row.sheetCols.l3ColumnPresent) {
         const added = parseCommaSeparatedLabels(row.sheetCols.l3);
@@ -390,7 +532,7 @@ export async function runUpdateBConnectedStories(argv: string[]): Promise<void> 
 
   await persist();
   console.error(
-    `[b-connected] Done. updated=${updated} skipped=${skipped} failed=${failed} ` +
-      `tracking=${bConnectedStatusWorkbookPath(workbookPath)}`
+    `[b-connected] Done. updated=${updated} alreadyUpdated=${alreadyUpdated} ` +
+      `skipped=${skipped} failed=${failed} tracking=${bConnectedStatusWorkbookPath(workbookPath)}`
   );
 }
