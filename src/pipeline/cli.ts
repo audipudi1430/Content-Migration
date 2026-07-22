@@ -32,8 +32,8 @@ async function main() {
   npm run pipeline:migrate-blog-categories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-blog-stories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-press-releases -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=42788] [--update]
-  npm run pipeline:migrate-web-redirects -- --env=stack-a --workbook=web-redirects.xlsx [--tab=web-redirects] [--offset=0] [--limit=25] [--concurrency=4] [--update] [--all]
-  # title→title, url→redirect_condition, new_url→redirect_mapping; pending/fail only unless --update; writes *-tracking.xlsx
+  npm run pipeline:migrate-web-redirects -- --env=stack-a --workbook=web-redirects.xlsx [--tab=web-redirects] [--mode=all|failed] [--offset=0] [--limit=25] [--concurrency=4] [--update]
+  # same limit/offset as stories: Pending/Fail only unless --update; title→title, url→redirect_condition, new_url→redirect_mapping; writes *-tracking.xlsx
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
   npm run pipeline:add-to-release -- --env=stack-a [--tab=stories] [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
   npm run pipeline:upload-folder-images -- --env=stack-a --folder=D:/photos/parent [--concurrency=4] [--no-skip-pass]

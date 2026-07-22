@@ -61,8 +61,9 @@ function mapRawToRow(r: Record<string, unknown>): WebRedirectRow {
       "entry_uid",
       "cs_uid",
     ]),
+    // Do not alias bare "status" — that conflicts with Contentstack select field naming.
     update_status: parseStatus(
-      pickCell(r, ["update_status", "status", "pass_fail", "pass/fail"])
+      pickCell(r, ["update_status", "pass_fail", "pass/fail", "migration_status"])
     ),
     update_message: pickCell(r, ["update_message", "message"]),
     updated_at: pickCell(r, ["updated_at"]),
@@ -95,8 +96,21 @@ export function isWebRedirectPending(row: WebRedirectRow): boolean {
   return !s || s === "Pending" || s === "Fail";
 }
 
+function normUrlKey(url: string): string {
+  return url.trim().toLowerCase();
+}
+
 function rowMatchKey(title: string, url: string, newUrl: string): string {
-  return `${title.trim().toLowerCase()}||${url.trim().toLowerCase()}||${newUrl.trim().toLowerCase()}`;
+  return `${title.trim().toLowerCase()}||${normUrlKey(url)}||${normUrlKey(newUrl)}`;
+}
+
+function resolveInputSheetName(wb: XLSX.WorkBook, tabName: string): string {
+  if (wb.Sheets[tabName]) return tabName;
+  const ci = wb.SheetNames.find((n) => n.toLowerCase() === tabName.toLowerCase());
+  if (ci) return ci;
+  const tracking = wb.SheetNames.find((n) => n.toLowerCase() === TRACKING_SHEET);
+  if (tracking) return tracking;
+  return wb.SheetNames[0] ?? tabName;
 }
 
 export function readWebRedirectWorkbook(path: string, tabName: string): WebRedirectRow[] {
@@ -104,11 +118,8 @@ export function readWebRedirectWorkbook(path: string, tabName: string): WebRedir
     throw new Error(`Web redirects workbook not found: ${path}`);
   }
   const wb = XLSX.read(readFileSync(path));
-  const preferred =
-    wb.Sheets[tabName] ??
-    wb.Sheets[wb.SheetNames.find((n) => n.toLowerCase() === tabName.toLowerCase()) ?? ""] ??
-    wb.Sheets[wb.SheetNames.find((n) => n.toLowerCase() === TRACKING_SHEET) ?? ""] ??
-    wb.Sheets[wb.SheetNames[0]!];
+  const sheetName = resolveInputSheetName(wb, tabName);
+  const preferred = wb.Sheets[sheetName];
   if (!preferred) return [];
 
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(preferred, { defval: "" });
@@ -117,7 +128,24 @@ export function readWebRedirectWorkbook(path: string, tabName: string): WebRedir
     .filter((r) => r.title.length > 0 || r.url.length > 0 || r.new_url.length > 0);
 }
 
-/** Merge prior *-tracking.xlsx so re-runs only process Pending/Fail. */
+function applyPriorRow(row: WebRedirectRow, priorRow: WebRedirectRow): boolean {
+  let changed = false;
+  if (priorRow.contentstack_entry_uid && !row.contentstack_entry_uid) {
+    row.contentstack_entry_uid = priorRow.contentstack_entry_uid;
+    changed = true;
+  }
+  if (priorRow.update_status && priorRow.update_status !== "Pending") {
+    row.update_status = priorRow.update_status;
+    row.update_message = priorRow.update_message || row.update_message;
+    row.updated_at = priorRow.updated_at || row.updated_at;
+    changed = true;
+  } else if (priorRow.contentstack_entry_uid) {
+    changed = true;
+  }
+  return changed;
+}
+
+/** Merge prior *-tracking.xlsx so re-runs only process Pending/Fail. Match by url first. */
 export function mergeWebRedirectPriorTracking(
   sourcePath: string,
   rows: WebRedirectRow[]
@@ -136,9 +164,11 @@ export function mergeWebRedirectPriorTracking(
     .sheet_to_json<Record<string, unknown>>(sheet, { defval: "" })
     .map(mapRawToRow);
 
+  const byUrl = new Map<string, WebRedirectRow>();
   const byKey = new Map<string, WebRedirectRow>();
   const byUid = new Map<string, WebRedirectRow>();
   for (const p of prior) {
+    if (p.url) byUrl.set(normUrlKey(p.url), p);
     byKey.set(rowMatchKey(p.title, p.url, p.new_url), p);
     if (p.contentstack_entry_uid) byUid.set(p.contentstack_entry_uid, p);
   }
@@ -146,20 +176,11 @@ export function mergeWebRedirectPriorTracking(
   let merged = 0;
   for (const row of rows) {
     const priorRow =
+      (row.url ? byUrl.get(normUrlKey(row.url)) : undefined) ||
       byKey.get(rowMatchKey(row.title, row.url, row.new_url)) ||
       (row.contentstack_entry_uid ? byUid.get(row.contentstack_entry_uid) : undefined);
     if (!priorRow) continue;
-    if (priorRow.contentstack_entry_uid && !row.contentstack_entry_uid) {
-      row.contentstack_entry_uid = priorRow.contentstack_entry_uid;
-    }
-    if (priorRow.update_status && priorRow.update_status !== "Pending") {
-      row.update_status = priorRow.update_status;
-      row.update_message = priorRow.update_message || row.update_message;
-      row.updated_at = priorRow.updated_at || row.updated_at;
-      merged += 1;
-    } else if (priorRow.contentstack_entry_uid) {
-      merged += 1;
-    }
+    if (applyPriorRow(row, priorRow)) merged += 1;
   }
   return merged;
 }
@@ -193,4 +214,65 @@ export function writeWebRedirectTrackingWorkbook(
   const ws = XLSX.utils.aoa_to_sheet(data);
   XLSX.utils.book_append_sheet(wb, ws, TRACKING_SHEET);
   writeFileSync(statusPath, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}
+
+/**
+ * Write Pass/Fail + UID back onto the source workbook tab so the next run
+ * skips completed rows even if the separate tracking file is missed.
+ */
+export function writeWebRedirectStatusIntoSourceWorkbook(
+  sourcePath: string,
+  tabName: string,
+  rows: WebRedirectRow[]
+): void {
+  if (!existsSync(sourcePath)) return;
+  const wb = XLSX.read(readFileSync(sourcePath));
+  const sheetName = resolveInputSheetName(wb, tabName);
+  const existing = wb.Sheets[sheetName];
+  const rawRows = existing
+    ? XLSX.utils.sheet_to_json<Record<string, unknown>>(existing, { defval: "" })
+    : [];
+
+  const byUrl = new Map<string, WebRedirectRow>();
+  const byKey = new Map<string, WebRedirectRow>();
+  for (const r of rows) {
+    if (r.url) byUrl.set(normUrlKey(r.url), r);
+    byKey.set(rowMatchKey(r.title, r.url, r.new_url), r);
+  }
+
+  const out = rawRows.map((raw) => {
+    const mapped = mapRawToRow(raw);
+    const hit =
+      (mapped.url ? byUrl.get(normUrlKey(mapped.url)) : undefined) ||
+      byKey.get(rowMatchKey(mapped.title, mapped.url, mapped.new_url));
+    const next = { ...raw };
+    if (hit) {
+      next.contentstack_entry_uid = hit.contentstack_entry_uid;
+      next.update_status = hit.update_status;
+      next.update_message = hit.update_message;
+      next.updated_at = hit.updated_at;
+    }
+    return next;
+  });
+
+  // If source was empty/unreadable, write the in-memory rows.
+  const dataRows =
+    out.length > 0
+      ? out
+      : rows.map((r) => ({
+          title: r.title,
+          url: r.url,
+          new_url: r.new_url,
+          contentstack_entry_uid: r.contentstack_entry_uid,
+          update_status: r.update_status,
+          update_message: r.update_message,
+          updated_at: r.updated_at,
+        }));
+
+  const ws = XLSX.utils.json_to_sheet(dataRows);
+  wb.Sheets[sheetName] = ws;
+  if (!wb.SheetNames.includes(sheetName)) {
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  }
+  writeFileSync(sourcePath, XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 }

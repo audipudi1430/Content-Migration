@@ -2,9 +2,10 @@ import { loadConfig } from "../config.js";
 import { ContentstackManagementClient } from "../contentstack/client.js";
 import {
   initPipelineEnv,
-  numberArg,
+  parseSelection,
   parseUpdateFlag,
   stringArg,
+  type SelectionMode,
 } from "./args.js";
 import { mapWithConcurrency } from "./async-pool.js";
 import {
@@ -14,10 +15,11 @@ import {
   readWebRedirectWorkbook,
   resolveWebRedirectTabName,
   webRedirectTrackingWorkbookPath,
+  writeWebRedirectStatusIntoSourceWorkbook,
   writeWebRedirectTrackingWorkbook,
+  type WebRedirectRow,
 } from "./migrate-web-redirects-sheet.js";
 
-const DEFAULT_LIMIT = 25;
 const DEFAULT_CONCURRENCY = 4;
 const MAX_CONCURRENCY = 16;
 const DEFAULT_CONTENT_TYPE = "webredirects";
@@ -31,22 +33,6 @@ function loadConcurrency(argv: string[]): number {
   return Number.isFinite(n) && n > 0
     ? Math.min(Math.floor(n), MAX_CONCURRENCY)
     : DEFAULT_CONCURRENCY;
-}
-
-function loadLimit(argv: string[]): number {
-  if (argv.includes("--all")) return Number.MAX_SAFE_INTEGER;
-  const fromArg = numberArg(argv, "--limit");
-  if (fromArg != null) {
-    if (fromArg <= 0) return Number.MAX_SAFE_INTEGER;
-    return fromArg;
-  }
-  const fromEnv = process.env.WEB_REDIRECT_LIMIT?.trim();
-  if (fromEnv) {
-    const n = Number(fromEnv);
-    if (Number.isFinite(n) && n <= 0) return Number.MAX_SAFE_INTEGER;
-    if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  }
-  return DEFAULT_LIMIT;
 }
 
 function loadContentTypeUid(argv: string[]): string {
@@ -74,6 +60,35 @@ function loadFieldUids(): {
   };
 }
 
+/**
+ * Same selection shape as story migrate (`selectContentRows`):
+ * filter by mode / --update, then slice(offset, offset + limit).
+ */
+export function selectWebRedirectRows(
+  rows: WebRedirectRow[],
+  mode: SelectionMode,
+  opts: { offset: number; limit: number },
+  updateExisting = false
+): { row: WebRedirectRow; index: number }[] {
+  let selected = rows.map((row, index) => ({ row, index }));
+
+  if (mode === "failed") {
+    selected = selected.filter(({ row }) => row.update_status === "Fail");
+  } else if (updateExisting) {
+    selected = selected.filter(
+      ({ row }) =>
+        row.update_status === "Pass" ||
+        row.update_status === "Pending" ||
+        row.update_status === "Fail" ||
+        isWebRedirectPending(row)
+    );
+  } else {
+    selected = selected.filter(({ row }) => isWebRedirectPending(row));
+  }
+
+  return selected.slice(opts.offset, opts.offset + opts.limit);
+}
+
 async function findEntryUidByExactField(
   cs: ContentstackManagementClient,
   contentTypeUid: string,
@@ -81,15 +96,14 @@ async function findEntryUidByExactField(
   value: string,
   locale: string
 ): Promise<string[]> {
-  // Reuse URL finder pattern via a one-off query through findEntryUidsByExactUrl's field param.
   return cs.findEntryUidsByExactUrl(contentTypeUid, [value], locale, fieldUid);
 }
 
 /**
  * Create/update Contentstack `webredirects` entries from a workbook.
  *
- * Columns: title → title, url → redirect_condition, new_url → redirect_mapping
- * Default batch 25; pending/fail only unless `--update` (re-run Pass).
+ * Selection matches story migrate: `--mode` + `--offset` + `--limit` (default 25).
+ * Pending/Fail only unless `--update` (includes Pass).
  */
 export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
   initPipelineEnv(argv);
@@ -100,8 +114,8 @@ export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
   const tabName = resolveWebRedirectTabName(stringArg(argv, "--tab"));
   const allowUpdatePass = parseUpdateFlag(argv, "WEB_REDIRECT_UPDATE");
   const concurrency = loadConcurrency(argv);
-  const offset = Math.max(0, numberArg(argv, "--offset") ?? 0);
-  const limit = loadLimit(argv);
+  const sel = parseSelection(argv, "WEB_REDIRECT");
+  const mode = (sel.mode || "all") as SelectionMode;
   const locale =
     stringArg(argv, "--locale")?.trim() ||
     process.env.WEB_REDIRECT_LOCALE?.trim() ||
@@ -119,31 +133,33 @@ export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
 
   const allRows = readWebRedirectWorkbook(workbookPath, tabName);
   const mergedPrior = mergeWebRedirectPriorTracking(workbookPath, allRows);
+  const passCount = allRows.filter((r) => r.update_status === "Pass").length;
+  const failCount = allRows.filter((r) => r.update_status === "Fail").length;
+  const pendingCount = allRows.filter((r) => isWebRedirectPending(r)).length;
 
-  const eligibleIndexes = allRows
-    .map((row, i) => ({ row, i }))
-    .filter(({ row }) => {
-      if (isWebRedirectPending(row)) return true;
-      if (allowUpdatePass && row.update_status === "Pass") return true;
-      return false;
-    })
-    .map(({ i }) => i);
-
-  const end = Math.min(eligibleIndexes.length, offset + limit);
-  const workIndexes = eligibleIndexes.slice(offset, end);
+  const selected = selectWebRedirectRows(allRows, mode, sel, allowUpdatePass);
+  const workIndexes = selected.map((s) => s.index);
 
   console.error(
-    `[web-redirects] workbook=${workbookPath} tab=${tabName} ` +
-      `eligible=${eligibleIndexes.length}/${allRows.length} work=${workIndexes.length} ` +
-      `offset=${offset} limit=${limit === Number.MAX_SAFE_INTEGER ? "all" : limit} ` +
+    `[web-redirects] workbook=${workbookPath} tab=${tabName} mode=${mode} ` +
+      `rows=${allRows.length} pass=${passCount} fail=${failCount} pending=${pendingCount} ` +
+      `selected=${workIndexes.length} offset=${sel.offset} limit=${sel.limit} ` +
       `concurrency=${concurrency} update=${allowUpdatePass ? 1 : 0} ` +
       `mergedTracking=${mergedPrior} contentType=${contentTypeUid} locale=${locale}`
   );
 
   if (workIndexes.length === 0) {
-    console.error("[web-redirects] No pending/fail rows to process (Pass skipped unless --update).");
+    console.error(
+      "[web-redirects] No rows selected (Pass skipped unless --update; try --mode=failed or adjust --offset/--limit)."
+    );
     writeWebRedirectTrackingWorkbook(workbookPath, allRows);
     return;
+  }
+
+  if (allowUpdatePass) {
+    console.error(
+      "[web-redirects] --update: will PUT existing Contentstack entries when UID/redirect_condition is known."
+    );
   }
 
   let created = 0;
@@ -154,6 +170,7 @@ export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
   const persist = (): Promise<void> => {
     writeChain = writeChain.then(() => {
       writeWebRedirectTrackingWorkbook(workbookPath, allRows);
+      writeWebRedirectStatusIntoSourceWorkbook(workbookPath, tabName, allRows);
     });
     return writeChain;
   };
@@ -227,14 +244,20 @@ export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
       }
 
       if (entryUid) {
-        if (row.update_status === "Pass" && !allowUpdatePass) {
+        // Already in Contentstack: skip rewrite unless --update or prior Fail retry.
+        if (!allowUpdatePass && row.update_status !== "Fail") {
           row.contentstack_entry_uid = entryUid;
+          row.update_status = "Pass";
+          row.update_message = `Already exists uid=${entryUid}; skipped (use --update to rewrite)`;
+          row.updated_at = now;
           skipped += 1;
           allRows[rowIndex] = row;
           await persist();
+          console.error(
+            `[web-redirects] Pass (skip existing) uid=${entryUid} title=${title}`
+          );
           return;
         }
-        // Existing UID (Fail retry, --update Pass, or matched by redirect_condition): update.
         await cs.updateEntry(contentTypeUid, entryUid, payload, locale);
         row.contentstack_entry_uid = entryUid;
         row.update_status = "Pass";
