@@ -66,8 +66,11 @@ export class ContentstackManagementClient {
     const q = locale ? `?locale=${encodeURIComponent(locale)}` : "";
     const url = `${this.base()}/content_types/${encodeURIComponent(contentTypeUid)}/entries${q}`;
     const body = JSON.stringify({ entry });
-    const res = await fetch(url, { method: "POST", headers: this.headers(), body });
-    const text = await res.text();
+    const { res, text } = await this.fetchWithRetry(
+      url,
+      { method: "POST", headers: this.headers(), body },
+      "POST entry"
+    );
     if (!res.ok) throw new Error(`Contentstack ${res.status} POST entry: ${text.slice(0, 800)}`);
     const json = JSON.parse(text) as { entry: { uid: string } };
     return json.entry as { uid: string };

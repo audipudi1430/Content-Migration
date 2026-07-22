@@ -23,6 +23,7 @@
     "pipeline:update-entry-urls": "tsx src/pipeline/cli.ts update-entry-urls",
     "pipeline:update-story-datelines": "tsx src/pipeline/cli.ts update-story-datelines",
     "pipeline:update-bconnected-stories": "tsx src/pipeline/cli.ts update-bconnected-stories",
+    "pipeline:migrate-web-redirects": "tsx src/pipeline/cli.ts migrate-web-redirects",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

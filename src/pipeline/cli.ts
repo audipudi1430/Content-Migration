@@ -13,6 +13,7 @@ import { runUpdateEntryUrls } from "./update-entry-urls.js";
 import { runUpdateStoryDatelines } from "./update-story-datelines.js";
 import { runUpdateBConnectedStories } from "./update-bconnected-stories.js";
 import { runMigratePressReleasesFromTracking } from "./migrate-press-releases.js";
+import { runMigrateWebRedirects } from "./migrate-web-redirects.js";
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -31,6 +32,8 @@ async function main() {
   npm run pipeline:migrate-blog-categories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-blog-stories -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=1,2] [--update]
   npm run pipeline:migrate-press-releases -- --env=stack-a [--mode=all|single|ids|failed] [--limit=10] [--ids=42788] [--update]
+  npm run pipeline:migrate-web-redirects -- --env=stack-a --workbook=web-redirects.xlsx [--tab=web-redirects] [--offset=0] [--limit=25] [--concurrency=4] [--update] [--all]
+  # title→title, url→redirect_condition, new_url→redirect_mapping; pending/fail only unless --update; writes *-tracking.xlsx
   npm run pipeline:publish -- --env=stack-a [--publish-mode=bulk-status|wp-ids|cs-uids] [--filter-migration-status=Pass] [--filter-publish-status=Unpublished] [--wp-ids=1,2] [--cs-uids=uid1,uid2] [--limit=100]
   npm run pipeline:add-to-release -- --env=stack-a [--tab=stories] [--release-name=My Release] [--filter-migration-status=Pass] [--release-action=publish] [--limit=5000]
   npm run pipeline:upload-folder-images -- --env=stack-a --folder=D:/photos/parent [--concurrency=4] [--no-skip-pass]
@@ -55,6 +58,7 @@ Env (see env/.env.migration-pipeline.example):
   story_category→blog_category: CS_CONTENT_TYPE_BLOG_CATEGORY, BLOG_CATEGORY_FIELD_*, BLOG_CATEGORY_URL_LANGUAGE, BLOG_CATEGORY_UPDATE, --update
   story→blog: CS_CONTENT_TYPE_BLOG, BLOG_FIELD_*, BLOG_FIELD_SEO_*, BLOG_URL_TEMPLATE=/articles/{slug}, BLOG_UPDATE, --update
   story→press_release: CS_CONTENT_TYPE_PRESS_RELEASE=press_release, PRESS_RELEASE_*, PRESS_RELEASE_START_SHEET, --update
+  web-redirects→webredirects: CS_CONTENT_TYPE_WEB_REDIRECTS, WEB_REDIRECT_*, --update
 `);
     process.exit(0);
   }
@@ -68,6 +72,7 @@ Env (see env/.env.migration-pipeline.example):
   else if (cmd === "migrate-blog-categories") await runMigrateBlogCategoriesFromTracking(rest);
   else if (cmd === "migrate-blog-stories") await runMigrateBlogStoriesFromTracking(rest);
   else if (cmd === "migrate-press-releases") await runMigratePressReleasesFromTracking(rest);
+  else if (cmd === "migrate-web-redirects") await runMigrateWebRedirects(rest);
   else if (cmd === "publish") await runPublishFromTracking(rest);
   else if (cmd === "add-to-release") await runAddToReleaseFromTracking(rest);
   else if (cmd === "upload-folder-images") await runUploadFolderImages(rest);
