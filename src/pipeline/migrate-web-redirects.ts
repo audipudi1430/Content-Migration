@@ -61,12 +61,16 @@ function loadContentTypeUid(argv: string[]): string {
 function loadFieldUids(): {
   redirectCondition: string;
   redirectMapping: string;
+  status: string;
+  statusValue: string;
 } {
   return {
     redirectCondition:
       process.env.WEB_REDIRECT_FIELD_CONDITION?.trim() || "redirect_condition",
     redirectMapping:
       process.env.WEB_REDIRECT_FIELD_MAPPING?.trim() || "redirect_mapping",
+    status: process.env.WEB_REDIRECT_FIELD_STATUS?.trim() || "status",
+    statusValue: process.env.WEB_REDIRECT_STATUS_VALUE?.trim() || "301",
   };
 }
 
@@ -199,6 +203,7 @@ export async function runMigrateWebRedirects(argv: string[]): Promise<void> {
       title,
       [fields.redirectCondition]: condition,
       [fields.redirectMapping]: mapping,
+      [fields.status]: fields.statusValue,
     };
 
     let entryUid = row.contentstack_entry_uid.trim();
